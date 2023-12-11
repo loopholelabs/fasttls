@@ -2,6 +2,6 @@
 .DS_Store
 *.crt
 *.key
+target
 fasttls.h-e
 fasttls.pc-e
-target

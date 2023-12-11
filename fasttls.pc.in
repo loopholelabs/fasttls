@@ -1,0 +1,11 @@
+prefix=@PREFIX@
+exec_prefix=${prefix}
+libdir=@LIBDIR@
+includedir=@INCLUDE_DIR@/
+
+Name: fasttls
+Version: @_VERSION_MAJOR@.@_VERSION_MINOR@.@_VERSION_MICRO@
+Description: FastTLS C/C++ Bindings
+Requires:
+Libs: -L${libdir} -lfasttls
+Cflags: -I${includedir}

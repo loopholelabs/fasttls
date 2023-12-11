@@ -1,0 +1,86 @@
+// SPDX-License-Identifier: Apache-2.0
+
+/*
+    Copyright 2023 Loophole Labs
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+           http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+*/
+
+#ifndef _LIBFASTTLS_H_
+#define _LIBFASTTLS_H_
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include <stdint.h>
+
+#define FASTTLS_VERSION_MAJOR        0
+#define FASTTLS_VERSION_MINOR        1
+#define FASTTLS_VERSION_MICRO        @_VERSION_MICRO@
+
+#define FASTTLS_VERSION                \
+    ((FASTTLS_VERSION_MAJOR * 10000) + \
+     (FASTTLS_VERSION_MINOR * 100) +   \
+     FASTTLS_VERSION_MICRO)
+
+#ifdef FASTTLS_USE_C_ENUMS
+# define _C_ENUM_THUNK(key, val) key = val,
+# define DEFINE_ENUM(name, cb)			\
+	typedef enum name : uint8_t {	    \
+		cb(_C_ENUM_THUNK)				\
+	} name ## _t;
+#else
+# define _C_CONST_THUNK(key, val) static const uint8_t key = val;
+# define DEFINE_ENUM(name, cb)          \
+	cb(_C_CONST_THUNK)                  \
+		typedef uint8_t name ## _t;
+#endif
+
+#define STATUS_VALUES(_)                \
+    _(FASTTLS_STATUS_PASS, 0)           \
+    _(FASTTLS_STATUS_FAILURE, 1)        \
+    _(FASTTLS_STATUS_NULL_PTR,  2)      \
+
+#define HANDSHAKE_STATE_VALUES(_)                \
+    _(FASTTLS_HANDSHAKE_STATE_COMPLETE, 0)       \
+    _(FASTTLS_HANDSHAKE_STATE_NEED_READ, 1)      \
+    _(FASTTLS_HANDSHAKE_STATE_NEED_WRITE,  2)    \
+
+DEFINE_ENUM(fasttls_status, STATUS_VALUES)
+DEFINE_ENUM(fasttls_handshake_state, HANDSHAKE_STATE_VALUES)
+
+typedef struct fasttls_server_config fasttls_server_config_t;
+
+typedef struct fasttls_server_session fasttls_server_session_t;
+
+typedef struct fasttls_handshake_result {
+    fasttls_handshake_state_t state;
+    uint8_t *output_data_ptr;
+    uint32_t output_data_len;
+} fasttls_handshake_result_t;
+
+fasttls_server_config_t *fasttls_server_config(fasttls_status_t *status, uint8_t *cert_data_ptr, uint32_t cert_data_len, uint8_t *key_data_ptr, uint32_t key_data_len, uint8_t *client_auth_ca_data_ptr, uint32_t client_auth_ca_data_len);
+void fasttls_free_server_config(fasttls_server_config_t *server_config);
+
+fasttls_server_session_t *fasttls_server_session(fasttls_status_t *status, fasttls_server_config_t *server_config);
+void fasttls_free_server_session(fasttls_server_session_t *server_session);
+
+fasttls_handshake_result_t *fasttls_server_handshake(fasttls_status_t *status, fasttls_server_session_t *server_session, uint8_t *input_data_ptr, uint32_t input_data_len);
+void fasttls_free_handshake(fasttls_handshake_result_t *handshake_result);
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
+
+#endif /* End of _LIBFASTTLS_H_ */
