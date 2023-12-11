@@ -195,9 +195,11 @@ pub extern "C" fn fasttls_server_handshake(status: *mut Status, server_session: 
 pub extern "C" fn fasttls_free_handshake(handshake: *mut HandshakeResult) {
     if !handshake.is_null() {
         unsafe {
-            let boxed_output = std::slice::from_raw_parts_mut((*handshake).output_data_ptr, (*handshake).output_data_len as usize) ;
-            let value = boxed_output.as_mut_ptr();
-            drop(Box::from_raw(value));
+            if !(*handshake).output_data_ptr.is_null() && (*handshake).output_data_len > 0 {
+                let boxed_output = std::slice::from_raw_parts_mut((*handshake).output_data_ptr, (*handshake).output_data_len as usize) ;
+                let value = boxed_output.as_mut_ptr();
+                drop(Box::from_raw(value));
+            }
             drop(Box::from_raw(handshake));
         }
     }

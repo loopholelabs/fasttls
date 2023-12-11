@@ -135,6 +135,8 @@ func main() {
 HandshakeComplete:
 	fmt.Printf("Handshake Complete\n")
 
+	wg.Wait()
+
 	C.fasttls_free_server_session(serverSession)
 	C.fasttls_free_server_config(serverConfig)
 
