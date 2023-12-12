@@ -146,7 +146,7 @@ func main() {
 	}
 HandshakeComplete:
 	fmt.Printf("Handshake Complete\n")
-
+	overflowBuffers := make([]*C.fasttls_buffer_t, 0)
 	for {
 		buffer := C.fasttls_server_overflow((*C.fasttls_status_t)(unsafe.Pointer(&status)), serverSession)
 		fmt.Printf("Overflow Status: %d\n", uint8(status))
@@ -159,14 +159,7 @@ HandshakeComplete:
 			break
 		}
 
-		overflow := unsafe.Slice((*byte)(unsafe.Pointer(buffer.data_ptr)), int(buffer.data_len))
-		fmt.Printf("Server receive: %s\n", overflow)
-
-		_, err = serverSocket.Write(overflow)
-		if err != nil {
-			panic(err)
-		}
-		C.fasttls_free_buffer(buffer)
+		overflowBuffers = append(overflowBuffers, buffer)
 	}
 
 	// This function takes ownership of the serverSession
@@ -196,6 +189,16 @@ HandshakeComplete:
 	}
 
 	for {
+		for _, buffer := range overflowBuffers {
+			overflow := unsafe.Slice((*byte)(unsafe.Pointer(buffer.data_ptr)), int(buffer.data_len))
+			fmt.Printf("Server receive: %s\n", overflow)
+
+			_, err = serverSocket.Write(overflow)
+			if err != nil {
+				panic(err)
+			}
+			C.fasttls_free_buffer(buffer)
+		}
 		_ = serverSocket.SetReadDeadline(time.Now().Add(time.Millisecond * 50))
 		readData := make([]byte, 1024)
 		readBytes, err := serverSocket.Read(readData)
