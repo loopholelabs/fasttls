@@ -60,9 +60,7 @@ pub struct HandshakeResult {
 #[derive(Debug, Clone)]
 pub struct HandshakeSecrets {
     pub rx: crypto::Secret,
-    pub rx_size: u32,
     pub tx: crypto::Secret,
-    pub tx_size: u32,
 }
 
 pub fn server_session(config: &ServerConfig) -> Result<ServerConnection, Box<dyn Error>> {
@@ -119,9 +117,7 @@ pub fn server_secrets(session: Box<ServerConnection>) -> Result<HandshakeSecrets
     let tx_crypto_secret = crypto::convert_to_secret(tls_version, tx_seq, tx_secrets)?;
 
     Ok(HandshakeSecrets {
-        rx_size: rx_crypto_secret.size(),
         rx: rx_crypto_secret,
-        tx_size: tx_crypto_secret.size(),
         tx: tx_crypto_secret,
     })
 }
