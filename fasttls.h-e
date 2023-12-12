@@ -85,7 +85,9 @@ typedef struct fasttls_handshake_secret {
 
 typedef struct fasttls_handshake_secrets {
     fasttls_handshake_secret_t rx;
+    uint32_t rx_size;
     fasttls_handshake_secret_t tx;
+    uint32_t tx_size;
 } fasttls_handshake_secrets_t;
 
 fasttls_server_config_t *fasttls_server_config(fasttls_status_t *status, uint8_t *cert_data_ptr, uint32_t cert_data_len, uint8_t *key_data_ptr, uint32_t key_data_len, uint8_t *client_auth_ca_data_ptr, uint32_t client_auth_ca_data_len);

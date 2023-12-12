@@ -15,7 +15,7 @@
 */
 
 use std::error::Error;
-use nom::Slice;
+use std::mem::size_of;
 use rustls::ConnectionTrafficSecrets;
 use crate::constants;
 
@@ -34,6 +34,12 @@ pub struct Secret {
     pub key: [u8; 32usize],
     pub salt: [u8; 4usize],
     pub rec_seq: [u8; 8usize],
+}
+
+impl Secret {
+    pub fn size(&self) -> u32 {
+        size_of::<Secret>() as u32
+    }
 }
 
 fn offset_iv_12(iv: &rustls::crypto::cipher::Iv) -> [u8; 12usize] {

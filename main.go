@@ -139,8 +139,8 @@ HandshakeComplete:
 		panic(fmt.Errorf("handshake secrets is nil"))
 	}
 
-	fmt.Printf("Handshake Secrets RX: %+v\n", handshakeSecrets.rx)
-	fmt.Printf("Handshake Secrets TX: %+v\n", handshakeSecrets.tx)
+	fmt.Printf("Handshake Secrets RX (%d): %+v\n", uint32(handshakeSecrets.rx_size), handshakeSecrets.rx)
+	fmt.Printf("Handshake Secrets TX (%d): %+v\n", uint32(handshakeSecrets.tx_size), handshakeSecrets.tx)
 
 	fmt.Printf("Closing 1\n")
 	C.fasttls_free_handshake_secrets(handshakeSecrets)
