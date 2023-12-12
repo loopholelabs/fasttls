@@ -70,6 +70,24 @@ typedef struct fasttls_handshake_result {
     uint32_t output_data_len;
 } fasttls_handshake_result_t;
 
+typedef struct fasttls_handshake_info {
+    uint16_t version;
+    uint16_t cipher_type;
+} fasttls_handshake_info_t;
+
+typedef struct fasttls_handshake_secret {
+    fasttls_handshake_info_t info;
+    uint8_t iv[12];
+    uint8_t key[32];
+    uint8_t salt[4];
+    uint8_t rec_seq[8];
+} fasttls_handshake_secret_t;
+
+typedef struct fasttls_handshake_secrets {
+    fasttls_handshake_secret_t rx;
+    fasttls_handshake_secret_t tx;
+} fasttls_handshake_secrets_t;
+
 fasttls_server_config_t *fasttls_server_config(fasttls_status_t *status, uint8_t *cert_data_ptr, uint32_t cert_data_len, uint8_t *key_data_ptr, uint32_t key_data_len, uint8_t *client_auth_ca_data_ptr, uint32_t client_auth_ca_data_len);
 void fasttls_free_server_config(fasttls_server_config_t *server_config);
 
@@ -78,6 +96,9 @@ void fasttls_free_server_session(fasttls_server_session_t *server_session);
 
 fasttls_handshake_result_t *fasttls_server_handshake(fasttls_status_t *status, fasttls_server_session_t *server_session, uint8_t *input_data_ptr, uint32_t input_data_len);
 void fasttls_free_handshake(fasttls_handshake_result_t *handshake_result);
+
+fasttls_handshake_secrets_t *fasttls_server_handshake_secrets(fasttls_status_t *status, fasttls_server_session_t *server_session);
+void fasttls_free_handshake_secrets(fasttls_handshake_secrets_t *handshake_secrets);
 
 #ifdef __cplusplus
 } /* extern "C" */

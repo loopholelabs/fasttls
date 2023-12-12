@@ -17,7 +17,7 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use rustls::{ServerConfig, ServerConnection};
-use crate::{config, HandshakeState};
+use crate::{config, HandshakeSecrets, HandshakeState};
 
 #[repr(u8)]
 #[derive(Debug, Clone)]
@@ -201,6 +201,43 @@ pub extern "C" fn fasttls_free_handshake(handshake: *mut HandshakeResult) {
                 drop(Box::from_raw(value));
             }
             drop(Box::from_raw(handshake));
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn fasttls_server_handshake_secrets(status: *mut Status, server_session: *mut ServerConnection) -> *mut HandshakeSecrets {
+    Status::check_not_null(status);
+
+    if server_session.is_null() {
+        unsafe {
+            *status = Status::NullPointer;
+        }
+        return std::ptr::null_mut();
+    }
+
+
+    match unsafe { crate::server_secrets(Box::from_raw(server_session)) } {
+        Ok(handshake_secrets) => {
+            unsafe {
+                *status = Status::Pass
+            };
+            Box::into_raw(Box::new(handshake_secrets))
+        }
+        Err(_) => {
+            unsafe {
+                *status = Status::Fail;
+            }
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn fasttls_free_handshake_secrets(handshake_secrets: *mut HandshakeSecrets) {
+    if !handshake_secrets.is_null() {
+        unsafe {
+            drop(Box::from_raw(handshake_secrets));
         }
     }
 }

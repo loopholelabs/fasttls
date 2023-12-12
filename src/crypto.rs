@@ -14,189 +14,76 @@
     limitations under the License.
 */
 
-use std::mem::size_of;
 use std::error::Error;
-use std::marker::PhantomData;
-use std::os::raw::c_uchar;
-use std::os::raw::c_ushort;
+use nom::Slice;
 use rustls::ConnectionTrafficSecrets;
-use crate::{constants, utils};
+use crate::constants;
 
 #[repr(C)]
-#[derive(Default, Clone)]
-pub struct __IncompleteArrayField<T>(PhantomData<T>, [T; 0]);
-impl<T> __IncompleteArrayField<T> {
-    #[inline]
-    pub const fn new() -> Self {
-        __IncompleteArrayField(PhantomData, [])
-    }
-    #[inline]
-    pub fn as_ptr(&self) -> *const T {
-        self as *const _ as *const T
-    }
-    #[inline]
-    pub fn as_mut_ptr(&mut self) -> *mut T {
-        self as *mut _ as *mut T
-    }
-    #[inline]
-    pub unsafe fn as_slice(&self, len: usize) -> &[T] {
-        std::slice::from_raw_parts(self.as_ptr(), len)
-    }
-    #[inline]
-    pub unsafe fn as_mut_slice(&mut self, len: usize) -> &mut [T] {
-        std::slice::from_raw_parts_mut(self.as_mut_ptr(), len)
-    }
-}
-impl<T> std::fmt::Debug for __IncompleteArrayField<T> {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        fmt.write_str("__IncompleteArrayField")
-    }
+#[derive(Debug, Clone)]
+pub struct Info {
+    pub version: u16,
+    pub cipher_type: u16,
 }
 
 #[repr(C)]
 #[derive(Debug, Clone)]
-pub struct TLSCryptoInfo {
-    pub version: c_ushort,
-    pub cipher_type: c_ushort,
+pub struct Secret {
+    pub info: Info,
+    pub iv: [u8; 12usize],
+    pub key: [u8; 32usize],
+    pub salt: [u8; 4usize],
+    pub rec_seq: [u8; 8usize],
 }
 
-#[repr(C)]
-#[derive(Debug, Clone)]
-pub struct TLS12CryptoInfoSM4GCM {
-    pub info: TLSCryptoInfo,
-    pub iv: [c_uchar; 8usize],
-    pub key: [c_uchar; 16usize],
-    pub salt: [c_uchar; 4usize],
-    pub rec_seq: [c_uchar; 8usize],
+fn offset_iv_12(iv: &rustls::crypto::cipher::Iv) -> [u8; 12usize] {
+    [iv.as_ref()[4], iv.as_ref()[5], iv.as_ref()[6], iv.as_ref()[7], iv.as_ref()[8], iv.as_ref()[9], iv.as_ref()[10], iv.as_ref()[11], 0, 0, 0, 0]
 }
 
-#[repr(C)]
-#[derive(Debug, Clone)]
-pub struct TLS12CryptoInfoSM4CCM {
-    pub info: TLSCryptoInfo,
-    pub iv: [c_uchar; 8usize],
-    pub key: [c_uchar; 16usize],
-    pub salt: [c_uchar; 4usize],
-    pub rec_seq: [c_uchar; 8usize],
+fn offset_iv_32(key: &rustls::crypto::cipher::AeadKey) -> [u8; 32usize] {
+    [key.as_ref()[0], key.as_ref()[1], key.as_ref()[2], key.as_ref()[3], key.as_ref()[4], key.as_ref()[5], key.as_ref()[6], key.as_ref()[7], key.as_ref()[8], key.as_ref()[9], key.as_ref()[10], key.as_ref()[11], key.as_ref()[12], key.as_ref()[13], key.as_ref()[14], key.as_ref()[15], 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 }
 
-#[repr(C)]
-#[derive(Debug, Clone)]
-pub struct TLS12CryptoInfoAESGCM128 {
-    pub info: TLSCryptoInfo,
-    pub iv: [c_uchar; 8usize],
-    pub key: [c_uchar; 16usize],
-    pub salt: [c_uchar; 4usize],
-    pub rec_seq: [c_uchar; 8usize],
-}
-
-#[repr(C)]
-#[derive(Debug, Clone)]
-pub struct TLS12CryptoInfoAESGCM256 {
-    pub info: TLSCryptoInfo,
-    pub iv: [c_uchar; 8usize],
-    pub key: [c_uchar; 32usize],
-    pub salt: [c_uchar; 4usize],
-    pub rec_seq: [c_uchar; 8usize],
-}
-
-#[repr(C)]
-#[derive(Debug, Clone)]
-pub struct TLS12CryptoInfoAESCCM128 {
-    pub info: TLSCryptoInfo,
-    pub iv: [c_uchar; 8usize],
-    pub key: [c_uchar; 16usize],
-    pub salt: [c_uchar; 4usize],
-    pub rec_seq: [c_uchar; 8usize],
-}
-
-#[repr(C)]
-#[derive(Debug, Clone)]
-pub struct TLS12CryptoInfoChacha20Poly1305 {
-    pub info: TLSCryptoInfo,
-    pub iv: [c_uchar; 12usize],
-    pub key: [c_uchar; 32usize],
-    pub salt: __IncompleteArrayField<c_uchar>,
-    pub rec_seq: [c_uchar; 8usize],
-}
-
-#[repr(C)]
-#[derive(Debug, Clone)]
-pub enum Info {
-    AESGCM128(TLS12CryptoInfoAESGCM128),
-    AESGCM256(TLS12CryptoInfoAESGCM256),
-    AESCCM128(TLS12CryptoInfoAESCCM128),
-    Chacha20Poly1305(TLS12CryptoInfoChacha20Poly1305),
-    SM4GCM(TLS12CryptoInfoSM4GCM),
-    SM4CCM(TLS12CryptoInfoSM4CCM),
-}
-
-impl Info {
-    pub(crate) fn as_ptr(&self) -> *const libc::c_void {
-        match self {
-            Info::AESGCM128(info) => info as *const _ as *const libc::c_void,
-            Info::AESGCM256(info) => info as *const _ as *const libc::c_void,
-            Info::AESCCM128(info) => info as *const _ as *const libc::c_void,
-            Info::Chacha20Poly1305(info) => info as *const _ as *const libc::c_void,
-            Info::SM4GCM(info) => info as *const _ as *const libc::c_void,
-            Info::SM4CCM(info) => info as *const _ as *const libc::c_void,
-        }
-    }
-
-    pub(crate) fn size(&self) -> usize {
-        match self {
-            Info::AESGCM128(_) => size_of::<TLS12CryptoInfoAESGCM128>(),
-            Info::AESGCM256(_) => size_of::<TLS12CryptoInfoAESGCM256>(),
-            Info::AESCCM128(_) => size_of::<TLS12CryptoInfoAESCCM128>(),
-            Info::Chacha20Poly1305(_) => size_of::<TLS12CryptoInfoChacha20Poly1305>(),
-            Info::SM4GCM(_) => size_of::<TLS12CryptoInfoSM4GCM>(),
-            Info::SM4CCM(_) => size_of::<TLS12CryptoInfoSM4CCM>(),
-        }
-    }
-}
-
-pub(crate) fn convert_to_info(tls_version: u16, seq: u64, secrets: ConnectionTrafficSecrets) -> Result<Info, Box<dyn Error>> {
-    let info = match secrets {
+pub(crate) fn convert_to_secret(tls_version: u16, seq: u64, secrets: ConnectionTrafficSecrets) -> Result<Secret, Box<dyn Error>> {
+    Ok(match secrets {
         ConnectionTrafficSecrets::Aes128Gcm { key, iv } => {
-            Info::AESGCM128(TLS12CryptoInfoAESGCM128 {
-                info: TLSCryptoInfo {
+            Secret {
+                info: Info {
                     version: tls_version,
                     cipher_type: constants::TLS_CIPHER_AES_GCM_128 as _,
                 },
-                iv: utils::convert_to_8_bytes(&iv.as_ref()[4..])?,
-                key: utils::convert_to_16_bytes(&key.as_ref()[..16])?,
-                salt: utils::convert_to_4_bytes(&iv.as_ref()[..4])?,
+                iv: offset_iv_12(&iv),
+                key: offset_iv_32(&key),
+                salt: (&iv.as_ref()[..4]).try_into().map_err(|_| "invalid iv length for AES128GCM")?,
                 rec_seq: seq.to_be_bytes(),
-            })
+            }
         },
         ConnectionTrafficSecrets::Aes256Gcm { key, iv } => {
-            Info::AESGCM256(TLS12CryptoInfoAESGCM256 {
-                info: TLSCryptoInfo {
+            Secret {
+                info: Info {
                     version: tls_version,
                     cipher_type: constants::TLS_CIPHER_AES_GCM_256 as _,
                 },
-                iv: utils::convert_to_8_bytes(&iv.as_ref()[4..])?,
-                key: utils::convert_to_32_bytes(&key.as_ref()[..32])?,
-                salt: utils::convert_to_4_bytes(&iv.as_ref()[..4])?,
+                iv: offset_iv_12(&iv),
+                key: (&key.as_ref()[..32]).try_into().map_err(|_| "invalid key length for AES256GCM")?,
+                salt: (&iv.as_ref()[..4]).try_into().map_err(|_| "invalid iv length for AES256GCM")?,
                 rec_seq: seq.to_be_bytes(),
-            })
+            }
         },
         ConnectionTrafficSecrets::Chacha20Poly1305 { key, iv } => {
-            Info::Chacha20Poly1305(TLS12CryptoInfoChacha20Poly1305 {
-                info: TLSCryptoInfo {
+            Secret {
+                info: Info {
                     version: tls_version,
                     cipher_type: constants::TLS_CIPHER_CHACHA20_POLY1305 as _,
                 },
-                iv: utils::convert_to_12_bytes(&iv.as_ref()[..12])?,
-                key: utils::convert_to_32_bytes(&key.as_ref()[..32])?,
-                salt: __IncompleteArrayField::new(),
+                iv: (&iv.as_ref()[..12]).try_into().map_err(|_| "invalid iv length for Chacha20Poly1305")?,
+                key: (&key.as_ref()[..32]).try_into().map_err(|_| "invalid key length for Chacha20Poly1305")?,
+                salt: [0u8; 4],
                 rec_seq: seq.to_be_bytes(),
-            })
+            }
         },
         _ => {
             return Err("unsupported cipher suite".into());
         }
-    };
-
-    Ok(info)
+    })
 }

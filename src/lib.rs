@@ -1,16 +1,3 @@
-mod config;
-mod crypto;
-mod constants;
-mod utils;
-
-mod testpki;
-mod ffi;
-
-use std::error::Error;
-use std::io::Cursor;
-use std::os::unix::prelude::RawFd;
-
-use rustls::{ServerConfig, SupportedCipherSuite};
 /*
     Copyright 2023 Loophole Labs
 
@@ -27,6 +14,16 @@ use rustls::{ServerConfig, SupportedCipherSuite};
     limitations under the License.
 */
 
+mod config;
+mod crypto;
+mod constants;
+mod testpki;
+mod ffi;
+
+use std::error::Error;
+use std::io::Cursor;
+
+use rustls::{ServerConfig, SupportedCipherSuite};
 use rustls::server::ServerConnection;
 
 #[repr(C)]
@@ -62,8 +59,8 @@ pub struct HandshakeResult {
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct HandshakeSecrets {
-    pub rx: crypto::Info,
-    pub tx: crypto::Info,
+    pub rx: crypto::Secret,
+    pub tx: crypto::Secret,
 }
 
 pub fn server_session(config: &ServerConfig) -> Result<ServerConnection, Box<dyn Error>> {
@@ -104,7 +101,7 @@ pub fn server_handshake(session: &mut ServerConnection, input: Option<Vec<u8>>) 
     Ok(HandshakeResult { state: HandshakeState::Complete, output: None})
 }
 
-pub fn extract_secrets(session: ServerConnection) -> Result<HandshakeSecrets, Box<dyn Error>> {
+pub fn server_secrets(session: Box<ServerConnection>) -> Result<HandshakeSecrets, Box<dyn Error>> {
     let cipher_suite = session.negotiated_cipher_suite().ok_or("failed to get cipher suite")?;
     let tls_version = match cipher_suite {
         SupportedCipherSuite::Tls12(..) => constants::TLS_1_2_VERSION_NUMBER,
@@ -114,40 +111,40 @@ pub fn extract_secrets(session: ServerConnection) -> Result<HandshakeSecrets, Bo
     let secrets = session.dangerous_extract_secrets().map_err(|err| -> Box<dyn Error> { format!("failed to extract secrets: {}", err.to_string()).into() })?;
 
     let (rx_seq, rx_secrets) = secrets.rx;
-    let rx_crypto_info = crypto::convert_to_info(tls_version, rx_seq, rx_secrets)?;
+    let rx_crypto_secret = crypto::convert_to_secret(tls_version, rx_seq, rx_secrets)?;
 
     let (tx_seq, tx_secrets) = secrets.tx;
-    let tx_crypto_info = crypto::convert_to_info(tls_version, tx_seq, tx_secrets)?;
+    let tx_crypto_secret = crypto::convert_to_secret(tls_version, tx_seq, tx_secrets)?;
 
     Ok(HandshakeSecrets {
-        rx: rx_crypto_info,
-        tx: tx_crypto_info,
+        rx: rx_crypto_secret,
+        tx: tx_crypto_secret,
     })
 }
 
-fn setup_ulp(fd: RawFd) -> Result<(), Box<dyn Error>> {
-    unsafe {
-        if libc::setsockopt(
-            fd,
-            constants::SOL_TCP,
-            constants::TCP_ULP,
-            "tls".as_ptr() as *const libc::c_void,
-            3,
-        ) < 0
-        {
-            return Err("failed to set TCP_ULP".into());
-        }
-    }
-    Ok(())
-}
-
-fn setup_tls_info(fd: RawFd, dir: Direction, info: crypto::Info) -> Result<(), Box<dyn Error>> {
-    let ret = unsafe { libc::setsockopt(fd, constants::SOL_TLS, dir.into(), info.as_ptr(), info.size() as _) };
-    if ret < 0 {
-        return Err("failed to set TLS info".into());
-    }
-    Ok(())
-}
+// fn setup_ulp(fd: RawFd) -> Result<(), Box<dyn Error>> {
+//     unsafe {
+//         if libc::setsockopt(
+//             fd,
+//             constants::SOL_TCP,
+//             constants::TCP_ULP,
+//             "tls".as_ptr() as *const libc::c_void,
+//             3,
+//         ) < 0
+//         {
+//             return Err("failed to set TCP_ULP".into());
+//         }
+//     }
+//     Ok(())
+// }
+//
+// fn setup_tls_info(fd: RawFd, dir: Direction, info: crypto::Info) -> Result<(), Box<dyn Error>> {
+//     let ret = unsafe { libc::setsockopt(fd, constants::SOL_TLS, dir.into(), info.as_ptr(), info.size() as _) };
+//     if ret < 0 {
+//         return Err("failed to set TLS info".into());
+//     }
+//     Ok(())
+// }
 
 #[cfg(test)]
 mod tests {
@@ -305,10 +302,13 @@ mod tests {
                 handle_server_read(&mut server_socket, &mut server_session);
             }
 
-            server_session.send_close_notify();
-            _ = server_session.write_tls(&mut server_socket);
-            _ = server_socket.flush();
-            _ = server_socket.shutdown(std::net::Shutdown::Both);
+            let secrets = server_secrets(Box::new(server_session)).unwrap();
+            println!("Server secrets: {:?}", secrets);
+
+            // server_session.send_close_notify();
+            // _ = server_session.write_tls(&mut server_socket);
+            // _ = server_socket.flush();
+            // _ = server_socket.shutdown(std::net::Shutdown::Both);
         });
 
         server_handle.join().unwrap();

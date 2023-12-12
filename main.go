@@ -31,10 +31,6 @@ import (
 	"unsafe"
 )
 
-func toPtr(status C.fasttls_status_t) *C.fasttls_status_t {
-	return &status
-}
-
 func main() {
 	testPKI, err := testpki.New()
 	if err != nil {
@@ -93,12 +89,12 @@ func main() {
 
 	fmt.Printf("Doing FFI\n")
 
-	var status C.fasttls_status_t = C.FASTTLS_STATUS_PASS
+	var status C.fasttls_status_t = C.FASTTLS_STATUS_NULL_PTR
 
-	serverConfig := C.fasttls_server_config(toPtr(status), (*C.uint8_t)(unsafe.Pointer(&testPKI.ServerCert[0])), C.uint32_t(len(testPKI.ServerCert)), (*C.uint8_t)(unsafe.Pointer(&testPKI.ServerKey[0])), C.uint32_t(len(testPKI.ServerKey)), (*C.uint8_t)(unsafe.Pointer(&testPKI.CaCert[0])), C.uint32_t(len(testPKI.CaCert)))
+	serverConfig := C.fasttls_server_config((*C.fasttls_status_t)(unsafe.Pointer(&status)), (*C.uint8_t)(unsafe.Pointer(&testPKI.ServerCert[0])), C.uint32_t(len(testPKI.ServerCert)), (*C.uint8_t)(unsafe.Pointer(&testPKI.ServerKey[0])), C.uint32_t(len(testPKI.ServerKey)), (*C.uint8_t)(unsafe.Pointer(&testPKI.CaCert[0])), C.uint32_t(len(testPKI.CaCert)))
 	fmt.Printf("Config Status: %d\n", uint8(status))
 
-	serverSession := C.fasttls_server_session(toPtr(status), serverConfig)
+	serverSession := C.fasttls_server_session((*C.fasttls_status_t)(unsafe.Pointer(&status)), serverConfig)
 	fmt.Printf("Session Status: %d\n", uint8(status))
 
 	for {
@@ -108,7 +104,7 @@ func main() {
 			panic(err)
 		}
 
-		handshake := C.fasttls_server_handshake(toPtr(status), serverSession, (*C.uint8_t)(unsafe.Pointer(&readData[0])), C.uint32_t(bytesRead))
+		handshake := C.fasttls_server_handshake((*C.fasttls_status_t)(unsafe.Pointer(&status)), serverSession, (*C.uint8_t)(unsafe.Pointer(&readData[0])), C.uint32_t(bytesRead))
 		fmt.Printf("Handshake Status: %d\n", uint8(status))
 		fmt.Printf("Handshake State: %d\n", uint8(handshake.state))
 
@@ -135,9 +131,21 @@ func main() {
 HandshakeComplete:
 	fmt.Printf("Handshake Complete\n")
 
-	wg.Wait()
+	// This function takes ownership of the serverSession
+	// it will be freed automatically when the handshake secrets are freed
+	handshakeSecrets := C.fasttls_server_handshake_secrets((*C.fasttls_status_t)(unsafe.Pointer(&status)), serverSession)
+	fmt.Printf("Handshake Secrets Status: %d\n", uint8(status))
+	if handshakeSecrets == nil {
+		panic(fmt.Errorf("handshake secrets is nil"))
+	}
 
-	C.fasttls_free_server_session(serverSession)
+	fmt.Printf("Handshake Secrets RX: %+v\n", handshakeSecrets.rx)
+	fmt.Printf("Handshake Secrets TX: %+v\n", handshakeSecrets.tx)
+
+	fmt.Printf("Closing 1\n")
+	C.fasttls_free_handshake_secrets(handshakeSecrets)
+
+	fmt.Printf("Closing 2\n")
 	C.fasttls_free_server_config(serverConfig)
 
 	fmt.Printf("Done FFI\n")

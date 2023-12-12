@@ -30,6 +30,7 @@ headers: $(CLIB_HEADER) $(CLIB_PKG_CONFIG)
 .PHONY: build
 build:
 	cargo build --release
+	rm -rf ./main
 	CC='gcc' CXX='g++' go build main.go
 
 .PHONY: $(CLIB_HEADER)
