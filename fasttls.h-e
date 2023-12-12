@@ -102,6 +102,9 @@ void fasttls_free_handshake(fasttls_handshake_result_t *handshake_result);
 fasttls_handshake_secrets_t *fasttls_server_handshake_secrets(fasttls_status_t *status, fasttls_server_session_t *server_session);
 void fasttls_free_handshake_secrets(fasttls_handshake_secrets_t *handshake_secrets);
 
+void fasttls_setup_ulp(fasttls_status_t *status, int32_t fd);
+void fasttls_setup_ktls(fasttls_status_t *status, int32_t fd, fasttls_handshake_secrets_t *handshake_secrets);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

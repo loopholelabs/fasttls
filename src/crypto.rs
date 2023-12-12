@@ -37,6 +37,9 @@ pub struct Secret {
 }
 
 impl Secret {
+    pub fn as_ptr(&self) -> *const libc::c_void{
+        self as *const _ as *const libc::c_void
+    }
     pub fn size(&self) -> u32 {
         size_of::<Secret>() as u32
     }

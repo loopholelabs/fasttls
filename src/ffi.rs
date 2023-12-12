@@ -16,8 +16,37 @@
 
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-use rustls::{ServerConfig, ServerConnection};
 use crate::{config, HandshakeSecrets, HandshakeState};
+use rustls::{internal::msgs::{enums::AlertLevel, message::Message}, AlertDescription, ServerConfig, ServerConnection};
+
+const SOL_TCP: libc::c_int = 6;
+const TCP_ULP: libc::c_int = 31;
+const SOL_TLS: libc::c_int = 282;
+const TLS_TX: libc::c_int = 1;
+const TLS_RX: libc::c_int = 2;
+const TLS_SET_RECORD_TYPE: libc::c_int = 1;
+const ALERT: u8 = 0x15;
+
+#[cfg_attr(target_pointer_width = "32", repr(C, align(4)))]
+#[cfg_attr(target_pointer_width = "64", repr(C, align(8)))]
+struct Cmsg<const N: usize> {
+    hdr: libc::cmsghdr,
+    data: [u8; N],
+}
+
+impl<const N: usize> Cmsg<N> {
+    fn new(level: i32, typ: i32, data: [u8; N]) -> Self {
+        Self {
+            hdr: libc::cmsghdr {
+                #[allow(clippy::unnecessary_cast)]
+                cmsg_len: (memoffset::offset_of!(Self, data) + N) as _,
+                cmsg_level: level,
+                cmsg_type: typ,
+            },
+            data,
+        }
+    }
+}
 
 #[repr(u8)]
 #[derive(Debug, Clone)]
@@ -238,6 +267,79 @@ pub extern "C" fn fasttls_free_handshake_secrets(handshake_secrets: *mut Handsha
     if !handshake_secrets.is_null() {
         unsafe {
             drop(Box::from_raw(handshake_secrets));
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn fasttls_setup_ulp(status: *mut Status, fd: i32) {
+    Status::check_not_null(status);
+    unsafe {
+        if libc::setsockopt(fd, SOL_TCP, TCP_ULP, "tls".as_ptr() as *const libc::c_void, 3) < 0 {
+            *status = Status::Fail;
+        } else {
+            *status = Status::Pass;
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn fasttls_setup_ktls(status: *mut Status, fd: i32, handshake_secrets: *mut HandshakeSecrets) {
+    Status::check_not_null(status);
+
+    let boxed_handshake_secrets = unsafe { Box::from_raw(handshake_secrets) };
+    let mut ret = unsafe { libc::setsockopt(fd, SOL_TLS, TLS_TX, boxed_handshake_secrets.tx.as_ptr(), boxed_handshake_secrets.tx.size() as _) };
+    if ret < 0 {
+        unsafe {
+            *status = Status::Fail;
+        }
+        return
+    }
+
+    ret = unsafe { libc::setsockopt(fd, SOL_TLS, TLS_RX, boxed_handshake_secrets.rx.as_ptr(), boxed_handshake_secrets.rx.size() as _) };
+    if ret < 0 {
+        unsafe {
+            *status = Status::Fail;
+        }
+    } else {
+        unsafe {
+            *status = Status::Pass;
+        }
+    }
+
+    drop(boxed_handshake_secrets);
+}
+
+#[no_mangle]
+pub extern "C" fn fasttls_send_close_notify(status: *mut Status, fd: i32) {
+    let mut data = vec![];
+    Message::build_alert(AlertLevel::Warning, AlertDescription::CloseNotify)
+        .payload
+        .encode(&mut data);
+
+    let mut cmsg = Cmsg::new(SOL_TLS, TLS_SET_RECORD_TYPE, [ALERT]);
+
+    let msg = libc::msghdr {
+        msg_name: std::ptr::null_mut(),
+        msg_namelen: 0,
+        msg_iov: &mut libc::iovec {
+            iov_base: data.as_mut_ptr() as _,
+            iov_len: data.len(),
+        },
+        msg_iovlen: 1,
+        msg_control: &mut cmsg as *mut _ as *mut _,
+        msg_controllen: cmsg.hdr.cmsg_len,
+        msg_flags: 0,
+    };
+
+    let ret = unsafe { libc::sendmsg(fd, &msg, 0) };
+    if ret < 0 {
+        unsafe {
+            *status = Status::Fail;
+        }
+    } else {
+        unsafe {
+            *status = Status::Pass;
         }
     }
 }
