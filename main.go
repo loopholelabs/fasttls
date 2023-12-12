@@ -187,18 +187,17 @@ HandshakeComplete:
 	if err != nil {
 		panic(err)
 	}
-
-	for {
-		for _, buffer := range overflowBuffers {
-			overflow := unsafe.Slice((*byte)(unsafe.Pointer(buffer.data_ptr)), int(buffer.data_len))
-			//fmt.Printf("Server (overflow) receive: %s\n", overflow)
-			//fmt.Printf("Server (overflow) sending: %s\n", overflow)
-			_, err = serverSocket.Write(overflow)
-			if err != nil {
-				panic(err)
-			}
-			C.fasttls_free_buffer(buffer)
+	for _, buffer := range overflowBuffers {
+		overflow := unsafe.Slice((*byte)(unsafe.Pointer(buffer.data_ptr)), int(buffer.data_len))
+		fmt.Printf("Server (overflow) receive: %s\n", overflow)
+		fmt.Printf("Server (overflow) sending: %s\n", overflow)
+		_, err = serverSocket.Write(overflow)
+		if err != nil {
+			panic(err)
 		}
+		C.fasttls_free_buffer(buffer)
+	}
+	for {
 		_ = serverSocket.SetReadDeadline(time.Now().Add(time.Millisecond * 50))
 		readData := make([]byte, 1024)
 		readBytes, err := serverSocket.Read(readData)
