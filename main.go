@@ -192,7 +192,7 @@ HandshakeComplete:
 		for _, buffer := range overflowBuffers {
 			overflow := unsafe.Slice((*byte)(unsafe.Pointer(buffer.data_ptr)), int(buffer.data_len))
 			fmt.Printf("Server receive: %s\n", overflow)
-
+			fmt.Printf("Server sending: %s\n", overflow)
 			_, err = serverSocket.Write(overflow)
 			if err != nil {
 				panic(err)
@@ -210,7 +210,7 @@ HandshakeComplete:
 		}
 
 		fmt.Printf("Server receive: %s\n", readData[:readBytes])
-
+		fmt.Printf("Server sending: %s\n", readData[:readBytes])
 		_, err = serverSocket.Write(readData[:readBytes])
 		if err != nil {
 			panic(err)
