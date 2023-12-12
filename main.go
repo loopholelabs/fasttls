@@ -29,9 +29,22 @@ import (
 	"fmt"
 	"github.com/loopholelabs/fasttls/internal/testpki"
 	"github.com/loopholelabs/testing/conn/pair"
+	"net"
+	"os"
 	"sync"
+	"time"
 	"unsafe"
 )
+
+const (
+	TCP_ULP = 31
+	SOL_TLS = 282
+	TLS_TX  = 1
+	TLS_RX  = 2
+)
+
+//go:linkname setsockopt syscall.setsockopt
+func setsockopt(int, int, int, unsafe.Pointer, uintptr) error
 
 func main() {
 	testPKI, err := testpki.New()
@@ -134,20 +147,55 @@ HandshakeComplete:
 	fmt.Printf("Handshake Complete\n")
 
 	// This function takes ownership of the serverSession
-	// it will be freed automatically when the handshake secrets are freed
 	handshakeSecrets := C.fasttls_server_handshake_secrets((*C.fasttls_status_t)(unsafe.Pointer(&status)), serverSession)
 	fmt.Printf("Handshake Secrets Status: %d\n", uint8(status))
 	if handshakeSecrets == nil {
 		panic(fmt.Errorf("handshake secrets is nil"))
 	}
 
-	fmt.Printf("Handshake Secrets RX (%d): %+v\n", uint32(handshakeSecrets.rx_size), handshakeSecrets.rx)
-	fmt.Printf("Handshake Secrets TX (%d): %+v\n", uint32(handshakeSecrets.tx_size), handshakeSecrets.tx)
+	rawServerSocket, err := serverSocket.(*net.TCPConn).SyscallConn()
+	if err != nil {
+		panic(err)
+	}
+	err = rawServerSocket.Control(func(fd uintptr) {
+		C.fasttls_setup_ulp((*C.fasttls_status_t)(unsafe.Pointer(&status)), *(*C.int32_t)(unsafe.Pointer(&fd)))
+		fmt.Printf("Handshake ULP Status: %d\n", uint8(status))
+		if uint8(status) != 0 {
+			panic("ULP" +
+				" Setup Failed")
+		}
 
-	fmt.Printf("Closing 1\n")
-	C.fasttls_free_handshake_secrets(handshakeSecrets)
+		// Setting up kTLS this way takes ownership of handshakeSecrets
+		C.fasttls_setup_ktls((*C.fasttls_status_t)(unsafe.Pointer(&status)), *(*C.int32_t)(unsafe.Pointer(&fd)), handshakeSecrets)
+		fmt.Printf("Handshake KTLS Status: %d\n", uint8(status))
+		if uint8(status) != 0 {
+			panic("KTLS Setup Failed")
+		}
+	})
+	if err != nil {
+		panic(err)
+	}
 
-	fmt.Printf("Closing 2\n")
+	for {
+		_ = serverSocket.SetReadDeadline(time.Now().Add(time.Millisecond * 50))
+		readData := make([]byte, 1024)
+		readBytes, err := serverSocket.Read(readData)
+		if err != nil {
+			if os.IsTimeout(err) {
+				break
+			}
+			panic(err)
+		}
+
+		fmt.Printf("Server receive: %s\n", readData[:readBytes])
+
+		_, err = serverSocket.Write(readData[:readBytes])
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	fmt.Printf("Closing config\n")
 	C.fasttls_free_server_config(serverConfig)
 
 	fmt.Printf("Done FFI\n")
