@@ -146,6 +146,9 @@ func main() {
 HandshakeComplete:
 	fmt.Printf("Handshake Complete\n")
 
+	// TODO: Check if there is data read and stored in the session that needs to be pulled out of the session
+	// and processed before we enable kTLS and read/write from the socket
+
 	// This function takes ownership of the serverSession
 	handshakeSecrets := C.fasttls_server_handshake_secrets((*C.fasttls_status_t)(unsafe.Pointer(&status)), serverSession)
 	fmt.Printf("Handshake Secrets Status: %d\n", uint8(status))
