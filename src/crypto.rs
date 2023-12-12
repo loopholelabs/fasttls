@@ -178,7 +178,7 @@ pub(crate) fn convert_to_secret(tls_version: u16, seq: u64, secrets: ConnectionT
         },
         ConnectionTrafficSecrets::Aes256Gcm { key, iv } => {
             let mut corrected_iv = [0u8; 8usize];
-            for i in 0..12 {
+            for i in 0..8 {
                 corrected_iv[i] = iv.as_ref()[i+4];
             }
             let salt = (&iv.as_ref()[..4]).try_into().map_err(|_| "invalid iv length for AES256GCM Salt")?;

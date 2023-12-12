@@ -21,7 +21,8 @@ mod testpki;
 mod ffi;
 
 use std::error::Error;
-use std::io::Cursor;
+use std::io::{Cursor, Read};
+use std::io::ErrorKind::WouldBlock;
 
 use rustls::{ServerConfig, SupportedCipherSuite};
 use rustls::server::ServerConnection;
@@ -101,6 +102,25 @@ pub fn server_handshake(session: &mut ServerConnection, input: Option<Vec<u8>>) 
     Ok(HandshakeResult { state: HandshakeState::Complete, output: None})
 }
 
+pub fn server_handshake_overflow(session: &mut ServerConnection) -> Result<Option<Vec<u8>>, Box<dyn Error>> {
+    let mut reader = session.reader();
+    let mut plaintext_bytes = [0; 1024];
+    match reader.read(&mut plaintext_bytes) {
+        Ok(read_bytes) => {
+            if read_bytes > 0 {
+                return Ok(Some(plaintext_bytes[..read_bytes].to_vec()));
+            }
+            Ok(None)
+        }
+        Err(err) => {
+            if err.kind() != WouldBlock {
+                return Err("failed to read TLS bytes".into());
+            }
+            Ok(None)
+        }
+    }
+}
+
 pub fn server_secrets(session: Box<ServerConnection>) -> Result<HandshakeSecrets, Box<dyn Error>> {
     let cipher_suite = session.negotiated_cipher_suite().ok_or("failed to get cipher suite")?;
     let tls_version = match cipher_suite {
@@ -122,39 +142,15 @@ pub fn server_secrets(session: Box<ServerConnection>) -> Result<HandshakeSecrets
     })
 }
 
-// fn setup_ulp(fd: RawFd) -> Result<(), Box<dyn Error>> {
-//     unsafe {
-//         if libc::setsockopt(
-//             fd,
-//             constants::SOL_TCP,
-//             constants::TCP_ULP,
-//             "tls".as_ptr() as *const libc::c_void,
-//             3,
-//         ) < 0
-//         {
-//             return Err("failed to set TCP_ULP".into());
-//         }
-//     }
-//     Ok(())
-// }
-//
-// fn setup_tls_info(fd: RawFd, dir: Direction, info: crypto::Info) -> Result<(), Box<dyn Error>> {
-//     let ret = unsafe { libc::setsockopt(fd, constants::SOL_TLS, dir.into(), info.as_ptr(), info.size() as _) };
-//     if ret < 0 {
-//         return Err("failed to set TLS info".into());
-//     }
-//     Ok(())
-// }
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use std::io::ErrorKind::WouldBlock;
     use std::net::{TcpListener, TcpStream};
     use std::thread;
-    use std::io::{Read, Write};
+    use std::io::Write;
     use std::time::Duration;
+    use nom::AsBytes;
 
     use rustls::client::ClientConnection;
 
@@ -195,32 +191,24 @@ mod tests {
     }
 
     fn handle_server_read(connection: &mut dyn Write, server_session: &mut ServerConnection) {
-        let mut reader = server_session.reader();
-        let mut plaintext_bytes = [0; 1024];
+        let plaintext_bytes = server_handshake_overflow(server_session).unwrap();
+        match plaintext_bytes {
+            None => {}
+            Some(plaintext_bytes) => {
+                let message = std::str::from_utf8(plaintext_bytes.as_bytes()).unwrap();
+                println!("Server received: {}", message);
 
-        match reader.read(&mut plaintext_bytes) {
-            Ok(read_bytes) => {
-                if read_bytes > 0 {
-                    let message = std::str::from_utf8(&plaintext_bytes[..read_bytes]).unwrap();
-                    println!("Server received: {}", message);
+                let mut writer = server_session.writer();
+                writer.write_all(message.as_bytes()).unwrap();
 
-                    let mut writer = server_session.writer();
-                    writer.write_all(message.as_bytes()).unwrap();
-
-                    println!("Server sending: {}", message);
-                    match server_session.write_tls(connection) {
-                        Ok(_) => {
-                            connection.flush().unwrap();
-                        },
-                        Err(err) => {
-                            panic!("Error writing TLS bytes: {}", err);
-                        }
+                println!("Server sending: {}", message);
+                match server_session.write_tls(connection) {
+                    Ok(_) => {
+                        connection.flush().unwrap();
+                    },
+                    Err(err) => {
+                        panic!("Error writing TLS bytes: {}", err);
                     }
-                }
-            }
-            Err(err) => {
-                if err.kind() != WouldBlock {
-                    panic!("Error reading TLS bytes: {}", err);
                 }
             }
         }
