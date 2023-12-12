@@ -299,8 +299,10 @@ pub extern "C" fn fasttls_server_overflow(status: *mut Status, server_session: *
         return std::ptr::null_mut();
     }
 
-    match unsafe { crate::server_overflow(&mut Box::from_raw(server_session)) } {
+    let mut server_session = unsafe { Box::from_raw(server_session) };
+    match crate::server_overflow(&mut server_session) {
         Ok(data) => {
+            Box::into_raw(server_session);
             unsafe {
                 *status = Status::Pass
             };
@@ -317,6 +319,7 @@ pub extern "C" fn fasttls_server_overflow(status: *mut Status, server_session: *
             };
         }
         Err(_) => {
+            Box::into_raw(server_session);
             unsafe {
                 *status = Status::Fail;
             }

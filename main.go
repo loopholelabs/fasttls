@@ -155,6 +155,7 @@ HandshakeComplete:
 		}
 
 		if buffer.data_ptr == nil || buffer.data_len == 0 {
+			C.fasttls_free_buffer(buffer)
 			break
 		}
 
@@ -165,6 +166,7 @@ HandshakeComplete:
 		if err != nil {
 			panic(err)
 		}
+		C.fasttls_free_buffer(buffer)
 	}
 
 	// This function takes ownership of the serverSession
