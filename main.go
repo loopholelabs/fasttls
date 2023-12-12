@@ -100,11 +100,12 @@ func main() {
 			}
 			fmt.Printf("Client received: %s\n", plaintext[:readBytes])
 		}
+		fmt.Printf("Handshake Version: %d == %d\n", client.ConnectionState().Version, tls.VersionTLS13)
 	}()
 
 	fmt.Printf("Doing FFI\n")
 
-	var status C.fasttls_status_t = C.FASTTLS_STATUS_NULL_PTR
+	var status C.fasttls_status_t = C.FASTTLS_STATUS_PASS
 
 	serverConfig := C.fasttls_server_config((*C.fasttls_status_t)(unsafe.Pointer(&status)), (*C.uint8_t)(unsafe.Pointer(&testPKI.ServerCert[0])), C.uint32_t(len(testPKI.ServerCert)), (*C.uint8_t)(unsafe.Pointer(&testPKI.ServerKey[0])), C.uint32_t(len(testPKI.ServerKey)), (*C.uint8_t)(unsafe.Pointer(&testPKI.CaCert[0])), C.uint32_t(len(testPKI.CaCert)))
 	fmt.Printf("Config Status: %d\n", uint8(status))
@@ -146,15 +147,29 @@ func main() {
 HandshakeComplete:
 	fmt.Printf("Handshake Complete\n")
 
-	// TODO: Check if there is data read and stored in the session that needs to be pulled out of the session
-	// and processed before we enable kTLS and read/write from the socket
+	for {
+		buffer := C.fasttls_server_overflow((*C.fasttls_status_t)(unsafe.Pointer(&status)), serverSession)
+		fmt.Printf("Overflow Status: %d\n", uint8(status))
+		if uint8(status) != 0 {
+			panic("Overflow Failed")
+		}
+
+		if buffer.data_ptr == nil || buffer.data_len == 0 {
+			break
+		}
+
+		overflow := unsafe.Slice((*byte)(unsafe.Pointer(buffer.data_ptr)), int(buffer.data_len))
+		fmt.Printf("Server receive: %s\n", overflow)
+
+		_, err = serverSocket.Write(overflow)
+		if err != nil {
+			panic(err)
+		}
+	}
 
 	// This function takes ownership of the serverSession
 	handshakeSecrets := C.fasttls_server_handshake_secrets((*C.fasttls_status_t)(unsafe.Pointer(&status)), serverSession)
 	fmt.Printf("Handshake Secrets Status: %d\n", uint8(status))
-	if handshakeSecrets == nil {
-		panic(fmt.Errorf("handshake secrets is nil"))
-	}
 
 	rawServerSocket, err := serverSocket.(*net.TCPConn).SyscallConn()
 	if err != nil {
@@ -164,8 +179,7 @@ HandshakeComplete:
 		C.fasttls_setup_ulp((*C.fasttls_status_t)(unsafe.Pointer(&status)), *(*C.int32_t)(unsafe.Pointer(&fd)))
 		fmt.Printf("Handshake ULP Status: %d\n", uint8(status))
 		if uint8(status) != 0 {
-			panic("ULP" +
-				" Setup Failed")
+			panic("ULP Setup Failed")
 		}
 
 		// Setting up kTLS this way takes ownership of handshakeSecrets

@@ -91,7 +91,6 @@ pub(crate) fn load_ca(data: &Vec<u8>) -> Result<RootCertStore, Box<dyn Error>> {
     Ok(ca_store)
 }
 
-
 pub(crate) fn load_certs(data: &Vec<u8>) -> Result<Vec<CertificateDer<'static>>, Box<dyn Error>> {
     let mut reader = Cursor::new(data);
     let cert_iterator = rustls_pemfile::certs(&mut reader);

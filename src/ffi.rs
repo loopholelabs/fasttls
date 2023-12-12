@@ -16,6 +16,7 @@
 
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
+use std::error::Error;
 use crate::{config, HandshakeSecrets, HandshakeState};
 use rustls::{internal::msgs::{enums::AlertLevel, message::Message}, AlertDescription, ServerConfig, ServerConnection};
 
@@ -73,11 +74,27 @@ pub struct HandshakeResult {
 }
 
 impl HandshakeResult {
-    pub fn boxed_raw(state: HandshakeState, output_data_ptr: *mut u8, output_data_size: u32) -> *mut Self {
+    pub fn boxed_raw(state: HandshakeState, output_data_ptr: *mut u8, output_data_len: u32) -> *mut Self {
         Box::into_raw(Box::new(HandshakeResult {
             state,
             output_data_ptr,
-            output_data_len: output_data_size,
+            output_data_len,
+        }))
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct Buffer {
+    pub data_ptr: *mut u8,
+    pub data_len: u32,
+}
+
+impl Buffer {
+    pub fn boxed_raw(data_ptr: *mut u8, data_len: u32) -> *mut Self {
+        Box::into_raw(Box::new(Buffer {
+            data_ptr,
+            data_len,
         }))
     }
 }
@@ -270,6 +287,58 @@ pub extern "C" fn fasttls_free_handshake_secrets(handshake_secrets: *mut Handsha
         }
     }
 }
+
+#[no_mangle]
+pub extern "C" fn fasttls_server_overflow(status: *mut Status, server_session: *mut ServerConnection) -> *mut Buffer {
+    Status::check_not_null(status);
+
+    if server_session.is_null() {
+        unsafe {
+            *status = Status::NullPointer;
+        }
+        return std::ptr::null_mut();
+    }
+
+    match unsafe { crate::server_overflow(&mut Box::from_raw(server_session)) } {
+        Ok(data) => {
+            unsafe {
+                *status = Status::Pass
+            };
+            return match data {
+                Some(data) => {
+                    let mut boxed_data = data.into_boxed_slice();
+                    let buffer = Buffer::boxed_raw(boxed_data.as_mut_ptr(), boxed_data.len() as u32);
+                    std::mem::forget(boxed_data);
+                    buffer
+                }
+                None => {
+                    Buffer::boxed_raw(std::ptr::null_mut(), 0)
+                }
+            };
+        }
+        Err(_) => {
+            unsafe {
+                *status = Status::Fail;
+            }
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn fasttls_free_buffer(buffer: *mut Buffer) {
+    if !buffer.is_null() {
+        unsafe {
+            if !(*buffer).data_ptr.is_null() && (*buffer).data_len > 0 {
+                let boxed_output = std::slice::from_raw_parts_mut((*buffer).data_ptr, (*buffer).data_len as usize) ;
+                let value = boxed_output.as_mut_ptr();
+                drop(Box::from_raw(value));
+            }
+            drop(Box::from_raw(buffer));
+        }
+    }
+}
+
 
 #[no_mangle]
 pub extern "C" fn fasttls_setup_ulp(status: *mut Status, fd: i32) {

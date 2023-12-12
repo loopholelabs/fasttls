@@ -87,7 +87,7 @@ pub fn server_handshake(session: &mut ServerConnection, input: Option<Vec<u8>>) 
             }
         }
 
-        if session.wants_write() {
+        if session.is_handshaking() && session.wants_write() {
             let mut output = vec![];
             session.write_tls(&mut output)?;
             return if session.is_handshaking() {
@@ -102,7 +102,7 @@ pub fn server_handshake(session: &mut ServerConnection, input: Option<Vec<u8>>) 
     Ok(HandshakeResult { state: HandshakeState::Complete, output: None})
 }
 
-pub fn server_handshake_overflow(session: &mut ServerConnection) -> Result<Option<Vec<u8>>, Box<dyn Error>> {
+pub fn server_overflow(session: &mut ServerConnection) -> Result<Option<Vec<u8>>, Box<dyn Error>> {
     let mut reader = session.reader();
     let mut plaintext_bytes = [0; 1024];
     match reader.read(&mut plaintext_bytes) {
@@ -113,10 +113,10 @@ pub fn server_handshake_overflow(session: &mut ServerConnection) -> Result<Optio
             Ok(None)
         }
         Err(err) => {
-            if err.kind() != WouldBlock {
-                return Err("failed to read TLS bytes".into());
+            if err.kind() == WouldBlock {
+                return Ok(None);
             }
-            Ok(None)
+            Err("failed to read TLS bytes".into())
         }
     }
 }
@@ -191,7 +191,7 @@ mod tests {
     }
 
     fn handle_server_read(connection: &mut dyn Write, server_session: &mut ServerConnection) {
-        let plaintext_bytes = server_handshake_overflow(server_session).unwrap();
+        let plaintext_bytes = server_overflow(server_session).unwrap();
         match plaintext_bytes {
             None => {}
             Some(plaintext_bytes) => {
@@ -231,7 +231,7 @@ mod tests {
             client_socket.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
             client_socket.set_write_timeout(Some(Duration::from_millis(50))).unwrap();
             let mut client = rustls::Stream::new(&mut client_session, &mut client_socket);
-            for i in 1..10 {
+            for i in 0..10 {
                 let message = format!("message #{}", i);
                 println!("Client sending: {}", message);
                 client.write(message.as_bytes()).unwrap();
@@ -242,7 +242,6 @@ mod tests {
                         Ok(read_bytes) => read_bytes,
                         Err(err) => {
                             if err.kind() == WouldBlock {
-                                thread::sleep(Duration::from_millis(50));
                                 continue;
                             } else {
                                 panic!("Error reading TLS bytes: {}", err);
@@ -258,7 +257,6 @@ mod tests {
             _ = client.flush();
             _ = client.sock.shutdown(std::net::Shutdown::Both);
         });
-        thread::sleep(Duration::from_millis(10));
 
         let mut server_socket = listener.incoming().next().unwrap().unwrap();
         server_socket.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
@@ -275,7 +273,6 @@ mod tests {
                     Ok(read_bytes) => read_bytes,
                     Err(err) => {
                         if err.kind() == WouldBlock {
-                            thread::sleep(Duration::from_millis(50));
                             continue;
                         } else {
                             panic!("Error reading TLS bytes: {}", err)
@@ -290,13 +287,10 @@ mod tests {
                 handle_server_read(&mut server_socket, &mut server_session);
             }
 
-            let secrets = server_secrets(Box::new(server_session)).unwrap();
-            println!("Server secrets: {:?}", secrets);
-
-            // server_session.send_close_notify();
-            // _ = server_session.write_tls(&mut server_socket);
-            // _ = server_socket.flush();
-            // _ = server_socket.shutdown(std::net::Shutdown::Both);
+            server_session.send_close_notify();
+            _ = server_session.write_tls(&mut server_socket);
+            _ = server_socket.flush();
+            _ = server_socket.shutdown(std::net::Shutdown::Both);
         });
 
         server_handle.join().unwrap();
