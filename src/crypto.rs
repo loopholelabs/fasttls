@@ -47,38 +47,56 @@ fn offset_iv_32(key: &rustls::crypto::cipher::AeadKey) -> [u8; 32usize] {
 pub(crate) fn convert_to_secret(tls_version: u16, seq: u64, secrets: ConnectionTrafficSecrets) -> Result<Secret, Box<dyn Error>> {
     Ok(match secrets {
         ConnectionTrafficSecrets::Aes128Gcm { key, iv } => {
+            let mut corrected_iv = [0u8; 12usize];
+            for i in 0..8 {
+                corrected_iv[i] = iv.as_ref()[i+4];
+            }
+            let salt = (&iv.as_ref()[..4]).try_into().map_err(|_| "invalid iv length for AES128GCM Salt")?;
+            let mut corrected_key = [0u8; 32usize];
+            for i in 0..16 {
+                corrected_key[i] = key.as_ref()[i];
+            }
             Secret {
                 info: Info {
                     version: tls_version,
                     cipher_type: constants::TLS_CIPHER_AES_GCM_128 as _,
                 },
-                iv: offset_iv_12(&iv),
-                key: offset_iv_32(&key),
-                salt: (&iv.as_ref()[..4]).try_into().map_err(|_| "invalid iv length for AES128GCM")?,
+                iv: corrected_iv,
+                salt,
+                key: corrected_key,
                 rec_seq: seq.to_be_bytes(),
             }
         },
         ConnectionTrafficSecrets::Aes256Gcm { key, iv } => {
+            let mut corrected_iv = [0u8; 12usize];
+            for i in 0..12 {
+                corrected_iv[i] = iv.as_ref()[i+4];
+            }
+            let salt = (&iv.as_ref()[..4]).try_into().map_err(|_| "invalid iv length for AES256GCM Salt")?;
+            let corrected_key = (&key.as_ref()[..32]).try_into().map_err(|_| "invalid key length for AES256GCM Key")?;
             Secret {
                 info: Info {
                     version: tls_version,
                     cipher_type: constants::TLS_CIPHER_AES_GCM_256 as _,
                 },
-                iv: offset_iv_12(&iv),
-                key: (&key.as_ref()[..32]).try_into().map_err(|_| "invalid key length for AES256GCM")?,
-                salt: (&iv.as_ref()[..4]).try_into().map_err(|_| "invalid iv length for AES256GCM")?,
+                iv: corrected_iv,
+                salt,
+                key: corrected_key,
                 rec_seq: seq.to_be_bytes(),
             }
         },
         ConnectionTrafficSecrets::Chacha20Poly1305 { key, iv } => {
+            let corrected_iv = (&iv.as_ref()[..12]).try_into().map_err(|_| "invalid iv length for Chacha20Poly1305 IV")?;
+            let salt = [0u8; 4];
+            let corrected_key = (&key.as_ref()[..32]).try_into().map_err(|_| "invalid key length for Chacha20Poly1305 Key")?;
             Secret {
                 info: Info {
                     version: tls_version,
                     cipher_type: constants::TLS_CIPHER_CHACHA20_POLY1305 as _,
                 },
-                iv: (&iv.as_ref()[..12]).try_into().map_err(|_| "invalid iv length for Chacha20Poly1305")?,
-                key: (&key.as_ref()[..32]).try_into().map_err(|_| "invalid key length for Chacha20Poly1305")?,
-                salt: [0u8; 4],
+                iv: corrected_iv,
+                salt,
+                key: corrected_key,
                 rec_seq: seq.to_be_bytes(),
             }
         },
