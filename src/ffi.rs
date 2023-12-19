@@ -16,38 +16,8 @@
 
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-use std::error::Error;
-use crate::{config, handshake};
-use rustls::{internal::msgs::{enums::AlertLevel, message::Message}, AlertDescription, ServerConfig, ServerConnection};
-
-const SOL_TCP: libc::c_int = 6;
-const TCP_ULP: libc::c_int = 31;
-const SOL_TLS: libc::c_int = 282;
-const TLS_TX: libc::c_int = 1;
-const TLS_RX: libc::c_int = 2;
-const TLS_SET_RECORD_TYPE: libc::c_int = 1;
-const ALERT: u8 = 0x15;
-
-#[cfg_attr(target_pointer_width = "32", repr(C, align(4)))]
-#[cfg_attr(target_pointer_width = "64", repr(C, align(8)))]
-struct Cmsg<const N: usize> {
-    hdr: libc::cmsghdr,
-    data: [u8; N],
-}
-
-impl<const N: usize> Cmsg<N> {
-    fn new(level: i32, typ: i32, data: [u8; N]) -> Self {
-        Self {
-            hdr: libc::cmsghdr {
-                #[allow(clippy::unnecessary_cast)]
-                cmsg_len: (memoffset::offset_of!(Self, data) + N) as _,
-                cmsg_level: level,
-                cmsg_type: typ,
-            },
-            data,
-        }
-    }
-}
+use crate::{config, constants, crypto, handshake, Server, ServerSession, utils};
+use rustls::{internal::msgs::{enums::AlertLevel, message::Message}, AlertDescription};
 
 #[repr(u8)]
 #[derive(Debug, Clone)]
@@ -56,7 +26,6 @@ pub enum Status {
     Fail,
     NullPointer,
 }
-
 impl Status {
     pub fn check_not_null(status: *mut Status) {
         if status.is_null() {
@@ -72,7 +41,6 @@ pub struct HandshakeResult {
     pub output_data_ptr: *mut u8,
     pub output_data_len: u32,
 }
-
 impl HandshakeResult {
     pub fn boxed_raw(state: handshake::State, output_data_ptr: *mut u8, output_data_len: u32) -> *mut Self {
         Box::into_raw(Box::new(HandshakeResult {
@@ -89,7 +57,6 @@ pub struct Buffer {
     pub data_ptr: *mut u8,
     pub data_len: u32,
 }
-
 impl Buffer {
     pub fn boxed_raw(data_ptr: *mut u8, data_len: u32) -> *mut Self {
         Box::into_raw(Box::new(Buffer {
@@ -99,18 +66,8 @@ impl Buffer {
     }
 }
 
-fn convert_ptr_to_vec(ptr: *mut u8, size: u32) -> Option<Vec<u8>> {
-    if ptr.is_null() || size == 0 {
-        None
-    } else {
-        Some(unsafe {
-            Vec::from(std::slice::from_raw_parts(ptr, size as usize))
-        })
-    }
-}
-
 #[no_mangle]
-pub extern "C" fn fasttls_server_config(status: *mut Status, cert_data_ptr: *mut u8, cert_data_len: u32, key_data_ptr: *mut u8, key_data_len: u32, client_auth_ca_data_ptr: *mut u8, client_auth_ca_data_len: u32) -> *mut ServerConfig {
+pub extern "C" fn fasttls_server(status: *mut Status, cert_data_ptr: *mut u8, cert_data_len: u32, key_data_ptr: *mut u8, key_data_len: u32, client_auth_ca_data_ptr: *mut u8, client_auth_ca_data_len: u32) -> *mut Server {
     Status::check_not_null(status);
 
     if cert_data_ptr.is_null() || cert_data_len == 0 {
@@ -135,14 +92,14 @@ pub extern "C" fn fasttls_server_config(status: *mut Status, cert_data_ptr: *mut
         std::slice::from_raw_parts(key_data_ptr, key_data_len as usize)
     });
 
-    let client_auth_ca_data = convert_ptr_to_vec(client_auth_ca_data_ptr, client_auth_ca_data_len);
+    let client_auth_ca_data = utils::convert_ptr_to_vec(client_auth_ca_data_ptr, client_auth_ca_data_len);
 
     match config::get_server_config(&cert_data, &key_data, client_auth_ca_data.as_ref()) {
         Ok(server_config) => {
             unsafe {
                 *status = Status::Pass
             };
-            Box::into_raw(Box::new(server_config))
+            Box::into_raw(Box::new(Server::new(server_config)))
         }
         Err(_) => {
             unsafe {
@@ -154,43 +111,43 @@ pub extern "C" fn fasttls_server_config(status: *mut Status, cert_data_ptr: *mut
 }
 
 #[no_mangle]
-pub extern "C" fn fasttls_free_server_config(server_config: *mut ServerConfig) {
-    if !server_config.is_null() {
+pub extern "C" fn fasttls_free_server(server: *mut Server) {
+    if !server.is_null() {
         unsafe {
-            drop(Box::from_raw(server_config));
+            drop(Box::from_raw(server));
         }
     }
 }
 
-// #[no_mangle]
-// pub extern "C" fn fasttls_server_session(status: *mut Status, server_config: *mut ServerConfig) -> *mut ServerConnection {
-//     Status::check_not_null(status);
-//
-//     if server_config.is_null() {
-//         unsafe {
-//             *status = Status::NullPointer;
-//         }
-//         return std::ptr::null_mut();
-//     }
-//
-//     match unsafe { crate::server_session(&*server_config) } {
-//         Ok(server_session) => {
-//             unsafe {
-//                 *status = Status::Pass
-//             };
-//             Box::into_raw(Box::new(server_session))
-//         }
-//         Err(_) => {
-//             unsafe {
-//                 *status = Status::Fail;
-//             }
-//             std::ptr::null_mut()
-//         }
-//     }
-// }
+#[no_mangle]
+pub extern "C" fn fasttls_server_session(status: *mut Status, server: *mut Server) -> *mut ServerSession {
+    Status::check_not_null(status);
+
+    if server.is_null() {
+        unsafe {
+            *status = Status::NullPointer;
+        }
+        return std::ptr::null_mut();
+    }
+
+    match unsafe { (&*server).session() } {
+        Ok(server_session) => {
+            unsafe {
+                *status = Status::Pass
+            };
+            Box::into_raw(Box::new(server_session))
+        }
+        Err(_) => {
+            unsafe {
+                *status = Status::Fail;
+            }
+            std::ptr::null_mut()
+        }
+    }
+}
 
 #[no_mangle]
-pub extern "C" fn fasttls_free_server_session(server_session: *mut ServerConnection) {
+pub extern "C" fn fasttls_free_server_session(server_session: *mut ServerSession) {
     if !server_session.is_null() {
         unsafe {
             drop(Box::from_raw(server_session));
@@ -198,44 +155,44 @@ pub extern "C" fn fasttls_free_server_session(server_session: *mut ServerConnect
     }
 }
 
-// #[no_mangle]
-// pub extern "C" fn fasttls_server_handshake(status: *mut Status, server_session: *mut ServerConnection, input_data_ptr: *mut u8, input_data_len: u32) -> *mut HandshakeResult {
-//     Status::check_not_null(status);
-//
-//     if server_session.is_null() {
-//         unsafe {
-//             *status = Status::NullPointer;
-//         }
-//         return std::ptr::null_mut();
-//     }
-//
-//     let input_data = convert_ptr_to_vec(input_data_ptr, input_data_len);
-//
-//     match unsafe { crate::server_handshake(&mut *server_session, input_data) } {
-//         Ok(handshake_result) => {
-//             unsafe {
-//                 *status = Status::Pass
-//             };
-//             match handshake_result.output {
-//                 Some(output) => {
-//                     let mut boxed_output = output.into_boxed_slice();
-//                     let handshake_result = HandshakeResult::boxed_raw(handshake_result.state, boxed_output.as_mut_ptr(), boxed_output.len() as u32);
-//                     std::mem::forget(boxed_output);
-//                     handshake_result
-//                 }
-//                 None => {
-//                     HandshakeResult::boxed_raw(handshake_result.state, std::ptr::null_mut(), 0)
-//                 }
-//             }
-//         }
-//         Err(_) => {
-//             unsafe {
-//                 *status = Status::Fail;
-//             }
-//             std::ptr::null_mut()
-//         }
-//     }
-// }
+#[no_mangle]
+pub extern "C" fn fasttls_server_handshake(status: *mut Status, server_session: *mut ServerSession, input_data_ptr: *mut u8, input_data_len: u32) -> *mut HandshakeResult {
+    Status::check_not_null(status);
+
+    if server_session.is_null() {
+        unsafe {
+            *status = Status::NullPointer;
+        }
+        return std::ptr::null_mut();
+    }
+
+    let input_data = utils::convert_ptr_to_slice(input_data_ptr, input_data_len);
+
+    match unsafe { (&mut *server_session).handshake(input_data) } {
+        Ok(handshake_result) => {
+            unsafe {
+                *status = Status::Pass
+            };
+            match handshake_result.output {
+                Some(output) => {
+                    let mut boxed_output = output.into_boxed_slice();
+                    let handshake_result = HandshakeResult::boxed_raw(handshake_result.state, boxed_output.as_mut_ptr(), boxed_output.len() as u32);
+                    std::mem::forget(boxed_output);
+                    handshake_result
+                }
+                None => {
+                    HandshakeResult::boxed_raw(handshake_result.state, std::ptr::null_mut(), 0)
+                }
+            }
+        }
+        Err(_) => {
+            unsafe {
+                *status = Status::Fail;
+            }
+            std::ptr::null_mut()
+        }
+    }
+}
 
 #[no_mangle]
 pub extern "C" fn fasttls_free_handshake(handshake: *mut HandshakeResult) {
@@ -251,82 +208,77 @@ pub extern "C" fn fasttls_free_handshake(handshake: *mut HandshakeResult) {
     }
 }
 
-// #[no_mangle]
-// pub extern "C" fn fasttls_server_handshake_secrets(status: *mut Status, server_session: *mut ServerConnection) -> *mut HandshakeSecrets {
-//     Status::check_not_null(status);
-//
-//     if server_session.is_null() {
-//         unsafe {
-//             *status = Status::NullPointer;
-//         }
-//         return std::ptr::null_mut();
-//     }
-//
-//
-//     match unsafe { crate::server_secrets(Box::from_raw(server_session)) } {
-//         Ok(handshake_secrets) => {
-//             unsafe {
-//                 *status = Status::Pass
-//             };
-//             Box::into_raw(Box::new(handshake_secrets))
-//         }
-//         Err(_) => {
-//             unsafe {
-//                 *status = Status::Fail;
-//             }
-//             std::ptr::null_mut()
-//         }
-//     }
-// }
+#[no_mangle]
+pub extern "C" fn fasttls_server_secrets(status: *mut Status, server_session: *mut ServerSession) -> *mut handshake::Secrets {
+    Status::check_not_null(status);
+
+    if server_session.is_null() {
+        unsafe {
+            *status = Status::NullPointer;
+        }
+        return std::ptr::null_mut();
+    }
+
+    let server_session = unsafe { Box::from_raw(server_session) };
+
+    match server_session.secrets() {
+        Ok(handshake_secrets) => {
+            unsafe {
+                *status = Status::Pass
+            };
+            Box::into_raw(Box::new(handshake_secrets))
+        }
+        Err(_) => {
+            unsafe {
+                *status = Status::Fail;
+            }
+            std::ptr::null_mut()
+        }
+    }
+}
 
 #[no_mangle]
-// pub extern "C" fn fasttls_free_handshake_secrets(handshake_secrets: *mut HandshakeSecrets) {
-//     if !handshake_secrets.is_null() {
-//         unsafe {
-//             drop(Box::from_raw(handshake_secrets));
-//         }
-//     }
-// }
-//
-// #[no_mangle]
-// pub extern "C" fn fasttls_server_overflow(status: *mut Status, server_session: *mut ServerConnection) -> *mut Buffer {
-//     Status::check_not_null(status);
-//
-//     if server_session.is_null() {
-//         unsafe {
-//             *status = Status::NullPointer;
-//         }
-//         return std::ptr::null_mut();
-//     }
-//
-//     let mut server_session = unsafe { Box::from_raw(server_session) };
-//     match crate::server_overflow(&mut server_session) {
-//         Ok(data) => {
-//             Box::into_raw(server_session);
-//             unsafe {
-//                 *status = Status::Pass
-//             };
-//             return match data {
-//                 Some(data) => {
-//                     let mut boxed_data = data.into_boxed_slice();
-//                     let buffer = Buffer::boxed_raw(boxed_data.as_mut_ptr(), boxed_data.len() as u32);
-//                     std::mem::forget(boxed_data);
-//                     buffer
-//                 }
-//                 None => {
-//                     Buffer::boxed_raw(std::ptr::null_mut(), 0)
-//                 }
-//             };
-//         }
-//         Err(_) => {
-//             Box::into_raw(server_session);
-//             unsafe {
-//                 *status = Status::Fail;
-//             }
-//             std::ptr::null_mut()
-//         }
-//     }
-// }
+pub extern "C" fn fasttls_free_secrets(handshake_secrets: *mut handshake::Secrets) {
+    if !handshake_secrets.is_null() {
+        unsafe {
+            drop(Box::from_raw(handshake_secrets));
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn fasttls_server_read_plaintext(status: *mut Status, server_session: *mut ServerSession) -> *mut Buffer {
+    Status::check_not_null(status);
+
+    if server_session.is_null() {
+        unsafe {
+            *status = Status::NullPointer;
+        }
+        return std::ptr::null_mut();
+    }
+
+    match unsafe { (&mut *server_session).read_plaintext() } {
+        Ok(data) => {
+            unsafe {
+                *status = Status::Pass
+            };
+            if data.len() > 0 {
+                let mut boxed_data = Box::new(data);
+                let buffer = Buffer::boxed_raw(boxed_data.as_mut_ptr(), boxed_data.len() as u32);
+                std::mem::forget(boxed_data);
+                return buffer;
+            }
+            Buffer::boxed_raw(std::ptr::null_mut(), 0)
+
+        }
+        Err(_) => {
+            unsafe {
+                *status = Status::Fail;
+            }
+            std::ptr::null_mut()
+        }
+    }
+}
 
 #[no_mangle]
 pub extern "C" fn fasttls_free_buffer(buffer: *mut Buffer) {
@@ -342,12 +294,11 @@ pub extern "C" fn fasttls_free_buffer(buffer: *mut Buffer) {
     }
 }
 
-
 #[no_mangle]
 pub extern "C" fn fasttls_setup_ulp(status: *mut Status, fd: i32) {
     Status::check_not_null(status);
     unsafe {
-        if libc::setsockopt(fd, SOL_TCP, TCP_ULP, "tls".as_ptr() as *const libc::c_void, 3) < 0 {
+        if libc::setsockopt(fd, constants::SOL_TCP, constants::TCP_ULP, "tls".as_ptr() as *const libc::c_void, 3) < 0 {
             *status = Status::Fail;
         } else {
             *status = Status::Pass;
@@ -355,32 +306,32 @@ pub extern "C" fn fasttls_setup_ulp(status: *mut Status, fd: i32) {
     }
 }
 
-// #[no_mangle]
-// pub extern "C" fn fasttls_setup_ktls(status: *mut Status, fd: i32, handshake_secrets: *mut HandshakeSecrets) {
-//     Status::check_not_null(status);
-//
-//     let boxed_handshake_secrets = unsafe { Box::from_raw(handshake_secrets) };
-//     let mut ret = unsafe { libc::setsockopt(fd, SOL_TLS, TLS_TX, boxed_handshake_secrets.tx.as_ptr(), boxed_handshake_secrets.tx.size() as _) };
-//     if ret < 0 {
-//         unsafe {
-//             *status = Status::Fail;
-//         }
-//         return
-//     }
-//
-//     ret = unsafe { libc::setsockopt(fd, SOL_TLS, TLS_RX, boxed_handshake_secrets.rx.as_ptr(), boxed_handshake_secrets.rx.size() as _) };
-//     if ret < 0 {
-//         unsafe {
-//             *status = Status::Fail;
-//         }
-//     } else {
-//         unsafe {
-//             *status = Status::Pass;
-//         }
-//     }
-//
-//     drop(boxed_handshake_secrets);
-// }
+#[no_mangle]
+pub extern "C" fn fasttls_setup_ktls(status: *mut Status, fd: i32, handshake_secrets: *mut handshake::Secrets) {
+    Status::check_not_null(status);
+
+    let boxed_handshake_secrets = unsafe { Box::from_raw(handshake_secrets) };
+    let mut ret = unsafe { libc::setsockopt(fd, constants::SOL_TLS, constants::TLS_TX, boxed_handshake_secrets.tx.as_ptr(), boxed_handshake_secrets.tx.size() as _) };
+    if ret < 0 {
+        unsafe {
+            *status = Status::Fail;
+        }
+        return
+    }
+
+    ret = unsafe { libc::setsockopt(fd, constants::SOL_TLS, constants::TLS_RX, boxed_handshake_secrets.rx.as_ptr(), boxed_handshake_secrets.rx.size() as _) };
+    if ret < 0 {
+        unsafe {
+            *status = Status::Fail;
+        }
+    } else {
+        unsafe {
+            *status = Status::Pass;
+        }
+    }
+
+    drop(boxed_handshake_secrets);
+}
 
 #[no_mangle]
 pub extern "C" fn fasttls_send_close_notify(status: *mut Status, fd: i32) {
@@ -389,7 +340,7 @@ pub extern "C" fn fasttls_send_close_notify(status: *mut Status, fd: i32) {
         .payload
         .encode(&mut data);
 
-    let mut cmsg = Cmsg::new(SOL_TLS, TLS_SET_RECORD_TYPE, [ALERT]);
+    let mut cmsg = crypto::Cmsg::new(constants::SOL_TLS, constants::TLS_SET_RECORD_TYPE as i32, [constants::TLS_RECORD_ALERT]);
 
     let msg = libc::msghdr {
         msg_name: std::ptr::null_mut(),

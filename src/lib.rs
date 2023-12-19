@@ -20,6 +20,7 @@ mod constants;
 mod testpki;
 mod ffi;
 mod handshake;
+mod utils;
 
 use std::error::Error;
 use std::io::{Cursor, Read, Write};
@@ -34,7 +35,6 @@ pub struct Server {
 
 pub struct ServerSession {
     session: ServerConnection,
-    plaintext_bytes: usize,
 }
 
 impl Server {
@@ -49,8 +49,7 @@ impl Server {
             session: ServerConnection::new(self.config.clone())
                 .map_err(|err| -> Box<dyn Error> {
                     format!("failed to create session: {}", err.to_string()).into()
-                })?,
-            plaintext_bytes: 0,
+                })?
         };
         server_session.session.set_buffer_limit(None);
         Ok(server_session)
@@ -60,34 +59,22 @@ impl Server {
 impl ServerSession {
     // read_tls reads TLS bytes from the given reader into the session object
     fn read_tls(&mut self, reader: &mut dyn Read) -> Result<(), Box<dyn Error>> {
-        match self.session.read_tls(reader) {
-            Ok(_) => {}
-            Err(err) => {
-                return Err(format!("failed to read encrypted data: {}", err.to_string()).into());
-            }
-        };
-        match self.session.process_new_packets() {
-            Ok(handshake_state) => {
-                self.plaintext_bytes = handshake_state.plaintext_bytes_to_read();
-            }
-            Err(err) => {
-                return Err(format!("failed to process new packets: {}", err.to_string()).into());
-            }
-        };
+        self.session.read_tls(reader).map_err(|err| -> Box<dyn Error> { format!("failed to read encrypted data: {}", err.to_string()).into() })?;
+        self.session.process_new_packets().map_err(|err| -> Box<dyn Error> { format!("failed to process new packets: {}", err.to_string()).into() })?;
         Ok(())
     }
 
     // read_plaintext reads TLS bytes from the session and returns a vector of bytes
-    fn read_plaintext(&mut self) -> Result<Vec<u8>, Box<dyn Error>> {
+    fn read_plaintext(&mut self) -> Result<Box<[u8]>, Box<dyn Error>> {
         let mut reader = self.session.reader();
         let mut plaintext_bytes = vec![];
-        while self.plaintext_bytes > 0 {
+        loop {
             let mut buffer = [0; 1024];
             match reader.read(&mut buffer) {
                 Ok(read_bytes) => {
                     if read_bytes > 0 {
-                        self.plaintext_bytes -= read_bytes;
                         plaintext_bytes.extend_from_slice(&buffer[..read_bytes]);
+                        continue;
                     }
                     break;
                 }
@@ -95,30 +82,25 @@ impl ServerSession {
                     if err.kind() == std::io::ErrorKind::WouldBlock {
                         break;
                     }
-                    return Err("failed to read encrypted data".into());
+                    return Err(format!("failed to read plaintext data: {}", err.to_string()).into());
                 }
             }
         }
-        Ok(plaintext_bytes)
+        Ok(plaintext_bytes.into_boxed_slice())
     }
 
     // write_tls writes TLS bytes from the given writer into the session object
     fn write_tls(&mut self, writer: &mut dyn Write) -> Result<(), Box<dyn Error>> {
         while self.session.wants_write() {
-            match self.session.write_tls(writer) {
-                Ok(_) => {}
-                Err(err) => {
-                    return Err(format!("failed to write encrypted data: {}", err.to_string()).into());
-                }
-            };
+            self.session.write_tls(writer).map_err(|err| -> Box<dyn Error> { format!("failed to write encrypted data: {}", err.to_string()).into() })?;
         }
         Ok(())
     }
 
     // write_plaintext writes plaintext bytes into the session object
-    fn write_plaintext(&mut self, data: Vec<u8>) -> Result<(), Box<dyn Error>> {
+    fn write_plaintext(&mut self, data: &[u8]) -> Result<(), Box<dyn Error>> {
         let mut writer = self.session.writer();
-        writer.write(data.as_slice())?;
+        writer.write(data).map_err(|err| -> Box<dyn Error> { format!("failed to write plaintext data: {}", err.to_string()).into() })?;
         Ok(())
     }
 
@@ -263,7 +245,7 @@ mod tests {
     fn do_server_io<T>(connection: &mut T, server_session: &mut ServerSession) where T: Read + Write {
         let mut plaintext_bytes = server_session.read_plaintext().unwrap();
         if plaintext_bytes.len() > 0 {
-            server_session.write_plaintext(plaintext_bytes).unwrap();
+            server_session.write_plaintext(plaintext_bytes.as_ref()).unwrap();
             server_session.write_tls(connection).unwrap();
             connection.flush().unwrap();
         }
@@ -274,7 +256,7 @@ mod tests {
             }
             server_session.read_tls(&mut Cursor::new(receive_data)).unwrap();
             plaintext_bytes = server_session.read_plaintext().unwrap();
-            server_session.write_plaintext(plaintext_bytes).unwrap();
+            server_session.write_plaintext(plaintext_bytes.as_ref()).unwrap();
             server_session.write_tls(connection).unwrap();
         }
     }

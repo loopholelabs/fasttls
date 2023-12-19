@@ -15,39 +15,27 @@
 */
 
 use std::error::Error;
-use std::marker::PhantomData;
 use std::mem::size_of;
 use rustls::ConnectionTrafficSecrets;
 use crate::constants;
 
-#[repr(C)]
-#[derive(Default, Clone)]
-pub struct __IncompleteArrayField<T>(PhantomData<T>, [T; 0]);
-impl<T> __IncompleteArrayField<T> {
-    #[inline]
-    pub const fn new() -> Self {
-        __IncompleteArrayField(PhantomData, [])
-    }
-    #[inline]
-    pub fn as_ptr(&self) -> *const T {
-        self as *const _ as *const T
-    }
-    #[inline]
-    pub fn as_mut_ptr(&mut self) -> *mut T {
-        self as *mut _ as *mut T
-    }
-    #[inline]
-    pub unsafe fn as_slice(&self, len: usize) -> &[T] {
-        std::slice::from_raw_parts(self.as_ptr(), len)
-    }
-    #[inline]
-    pub unsafe fn as_mut_slice(&mut self, len: usize) -> &mut [T] {
-        std::slice::from_raw_parts_mut(self.as_mut_ptr(), len)
-    }
+#[cfg_attr(target_pointer_width = "32", repr(C, align(4)))]
+#[cfg_attr(target_pointer_width = "64", repr(C, align(8)))]
+pub(crate) struct Cmsg<const N: usize> {
+    pub(crate) hdr: libc::cmsghdr,
+    data: [u8; N],
 }
-impl<T> std::fmt::Debug for __IncompleteArrayField<T> {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        fmt.write_str("__IncompleteArrayField")
+impl<const N: usize> Cmsg<N> {
+    pub(crate) fn new(level: i32, typ: i32, data: [u8; N]) -> Self {
+        Self {
+            hdr: libc::cmsghdr {
+                #[allow(clippy::unnecessary_cast)]
+                cmsg_len: (memoffset::offset_of!(Self, data) + N) as _,
+                cmsg_level: level,
+                cmsg_type: typ,
+            },
+            data,
+        }
     }
 }
 
@@ -62,60 +50,60 @@ pub struct Info {
 #[derive(Debug, Clone)]
 pub struct TLS12SM4GCM {
     pub info: Info,
-    pub iv: [u8; 8usize],
-    pub key: [u8; 16usize],
-    pub salt: [u8; 4usize],
-    pub rec_seq: [u8; 8usize],
+    pub iv: [u8; constants::TLS_CIPHER_SM4_GCM_IV_SIZE as usize],
+    pub key: [u8; constants::TLS_CIPHER_SM4_GCM_KEY_SIZE as usize],
+    pub salt: [u8; constants::TLS_CIPHER_SM4_GCM_SALT_SIZE as usize],
+    pub rec_seq: [u8; constants::TLS_CIPHER_SM4_GCM_REC_SEQ_SIZE as usize],
 }
 
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct TLS12SM4CCM {
     pub info: Info,
-    pub iv: [u8; 8usize],
-    pub key: [u8; 16usize],
-    pub salt: [u8; 4usize],
-    pub rec_seq: [u8; 8usize],
+    pub iv: [u8; constants::TLS_CIPHER_SM4_CCM_IV_SIZE as usize],
+    pub key: [u8; constants::TLS_CIPHER_SM4_CCM_KEY_SIZE as usize],
+    pub salt: [u8; constants::TLS_CIPHER_SM4_CCM_SALT_SIZE as usize],
+    pub rec_seq: [u8; constants::TLS_CIPHER_SM4_CCM_REC_SEQ_SIZE as usize],
 }
 
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct TLS12AESGCM128 {
     pub info: Info,
-    pub iv: [u8; 8usize],
-    pub key: [u8; 16usize],
-    pub salt: [u8; 4usize],
-    pub rec_seq: [u8; 8usize],
+    pub iv: [u8; constants::TLS_CIPHER_AES_GCM_128_IV_SIZE as usize],
+    pub key: [u8; constants::TLS_CIPHER_AES_GCM_128_KEY_SIZE as usize],
+    pub salt: [u8; constants::TLS_CIPHER_AES_GCM_128_SALT_SIZE as usize],
+    pub rec_seq: [u8; constants::TLS_CIPHER_AES_GCM_128_REC_SEQ_SIZE as usize],
 }
 
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct TLS12AESGCM256 {
     pub info: Info,
-    pub iv: [u8; 8usize],
-    pub key: [u8; 32usize],
-    pub salt: [u8; 4usize],
-    pub rec_seq: [u8; 8usize],
+    pub iv: [u8; constants::TLS_CIPHER_AES_GCM_256_IV_SIZE as usize],
+    pub key: [u8; constants::TLS_CIPHER_AES_GCM_256_KEY_SIZE as usize],
+    pub salt: [u8; constants::TLS_CIPHER_AES_GCM_256_SALT_SIZE as usize],
+    pub rec_seq: [u8; constants::TLS_CIPHER_AES_GCM_256_REC_SEQ_SIZE as usize],
 }
 
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct TLS12AESCCM128 {
     pub info: Info,
-    pub iv: [u8; 8usize],
-    pub key: [u8; 16usize],
-    pub salt: [u8; 4usize],
-    pub rec_seq: [u8; 8usize],
+    pub iv: [u8; constants::TLS_CIPHER_AES_CCM_128_IV_SIZE as usize],
+    pub key: [u8; constants::TLS_CIPHER_AES_CCM_128_KEY_SIZE as usize],
+    pub salt: [u8; constants::TLS_CIPHER_AES_CCM_128_SALT_SIZE as usize],
+    pub rec_seq: [u8; constants::TLS_CIPHER_AES_CCM_128_REC_SEQ_SIZE as usize],
 }
 
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct TLS12Chacha20Poly1305 {
     pub info: Info,
-    pub iv: [u8; 12usize],
-    pub key: [u8; 32usize],
-    pub salt: __IncompleteArrayField<u8>,
-    pub rec_seq: [u8; 8usize],
+    pub iv: [u8; constants::TLS_CIPHER_CHACHA20_POLY1305_IV_SIZE as usize],
+    pub key: [u8; constants::TLS_CIPHER_CHACHA20_POLY1305_KEY_SIZE as usize],
+    pub salt: [u8; constants::TLS_CIPHER_CHACHA20_POLY1305_SALT_SIZE as usize],
+    pub rec_seq: [u8; constants::TLS_CIPHER_CHACHA20_POLY1305_REC_SEQ_SIZE as usize],
 }
 
 #[repr(C)]
@@ -196,7 +184,6 @@ pub(crate) fn convert_to_secret(tls_version: u16, seq: u64, secrets: ConnectionT
         },
         ConnectionTrafficSecrets::Chacha20Poly1305 { key, iv } => {
             let corrected_iv = (&iv.as_ref()[..12]).try_into().map_err(|_| "invalid iv length for Chacha20Poly1305 IV")?;
-            let salt = __IncompleteArrayField::new();
             let corrected_key = (&key.as_ref()[..32]).try_into().map_err(|_| "invalid key length for Chacha20Poly1305 Key")?;
             Secret::Chacha20Poly1305(TLS12Chacha20Poly1305 {
                 info: Info {
@@ -204,7 +191,7 @@ pub(crate) fn convert_to_secret(tls_version: u16, seq: u64, secrets: ConnectionT
                     cipher_type: constants::TLS_CIPHER_CHACHA20_POLY1305 as _,
                 },
                 iv: corrected_iv,
-                salt,
+                salt: [0; 0],
                 key: corrected_key,
                 rec_seq: seq.to_be_bytes(),
             })
