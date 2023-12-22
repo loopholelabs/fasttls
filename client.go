@@ -71,11 +71,16 @@ func NewClient(caCert []byte, clientAuthCert []byte, clientAuthKey []byte) (*Cli
 
 	return client, nil
 }
-func (c *Client) Session() (*Session, error) {
+func (c *Client) Session(serverName string) (*Session, error) {
 	if c.free.Load() {
 		return nil, ErrClientFreed
 	}
-	return newSession(C.fasttls_client_session((*C.fasttls_status_t)(unsafe.Pointer(&c.status)), c.client), kindClient)
+	s := C.CString(serverName)
+	session := C.fasttls_client_session((*C.fasttls_status_t)(unsafe.Pointer(&c.status)), c.client, (*C.int8_t)(unsafe.Pointer(s)))
+	if uint8(c.status) != 0 {
+		return nil, fmt.Errorf("failed to create client session: %d", uint8(c.status))
+	}
+	return newSession(session, kindClient)
 }
 
 func (c *Client) Free() {

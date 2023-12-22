@@ -86,7 +86,7 @@ fasttls_client_t *fasttls_client(fasttls_status_t *status, uint8_t *ca_data_ptr,
 void fasttls_free_client(fasttls_client_t *client);
 
 fasttls_session_t *fasttls_server_session(fasttls_status_t *status, fasttls_server_t *server);
-fasttls_session_t *fasttls_client_session(fasttls_status_t *status, fasttls_client_t *client);
+fasttls_session_t *fasttls_client_session(fasttls_status_t *status, fasttls_client_t *client, int8_t *server_name);
 void fasttls_free_session(fasttls_session_t *session);
 
 fasttls_handshake_result_t *fasttls_handshake(fasttls_status_t *status, fasttls_session_t *session, uint8_t *input_data_ptr, uint32_t input_data_len);

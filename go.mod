@@ -2,7 +2,10 @@ module github.com/loopholelabs/fasttls
 
 go 1.21
 
-require github.com/stretchr/testify v1.7.0
+require (
+	github.com/loopholelabs/testing v0.2.3
+	github.com/stretchr/testify v1.7.0
+)
 
 require (
 	github.com/davecgh/go-spew v1.1.0 // indirect

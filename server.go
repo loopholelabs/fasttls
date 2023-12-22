@@ -62,7 +62,11 @@ func (s *Server) Session() (*Session, error) {
 	if s.free.Load() {
 		return nil, ErrServerFreed
 	}
-	return newSession(C.fasttls_server_session((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.server), kindServer)
+	session := C.fasttls_server_session((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.server)
+	if uint8(s.status) != 0 {
+		return nil, fmt.Errorf("failed to create server session: %d", uint8(s.status))
+	}
+	return newSession(session, kindServer)
 }
 
 func (s *Server) Free() {

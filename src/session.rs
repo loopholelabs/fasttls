@@ -161,7 +161,7 @@ impl Session {
     // write_tls returns TLS bytes from the session object
     pub fn write_tls(&mut self) -> Result<Box<[u8]>, Box<dyn Error>> {
         let mut buffer = Vec::new();
-        self.write_tls_to_writer(&mut Cursor::new(&mut buffer))?;
+        self.write_tls_to_writer(&mut buffer)?;
         Ok(buffer.into_boxed_slice())
     }
 
@@ -180,7 +180,7 @@ impl Session {
                         return Ok(handshake::Result { state: handshake::State::NeedRead, output: None });
                     }
                     Some(input) => {
-                        self.read_tls_from_reader(&mut Cursor::new(input))?;
+                        self.read_tls(input)?;
                         if self.session.is_handshaking() && self.session.wants_read() {
                             return Ok(handshake::Result { state: handshake::State::NeedRead, output: None });
                         }
