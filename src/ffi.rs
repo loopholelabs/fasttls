@@ -16,7 +16,7 @@
 
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-use crate::{config, constants, crypto, handshake, Server, ServerSession, utils};
+use crate::{config, constants, crypto, handshake, Server, session, utils};
 use rustls::{internal::msgs::{enums::AlertLevel, message::Message}, AlertDescription};
 
 #[repr(u8)]
@@ -119,8 +119,52 @@ pub extern "C" fn fasttls_free_server(server: *mut Server) {
     }
 }
 
+// #[no_mangle]
+// pub extern "C" fn fasttls_client(status: *mut Status, cert_data_ptr: *mut u8, cert_data_len: u32, key_data_ptr: *mut u8, key_data_len: u32, client_auth_ca_data_ptr: *mut u8, client_auth_ca_data_len: u32) -> *mut Client {
+//     Status::check_not_null(status);
+//
+//     if cert_data_ptr.is_null() || cert_data_len == 0 {
+//         unsafe {
+//             *status = Status::NullPointer;
+//         }
+//         return std::ptr::null_mut();
+//     }
+//
+//     if key_data_ptr.is_null() || key_data_len == 0 {
+//         unsafe {
+//             *status = Status::NullPointer;
+//         }
+//         return std::ptr::null_mut();
+//     }
+//
+//     let cert_data = Vec::from(unsafe {
+//         std::slice::from_raw_parts(cert_data_ptr, cert_data_len as usize)
+//     });
+//
+//     let key_data = Vec::from(unsafe {
+//         std::slice::from_raw_parts(key_data_ptr, key_data_len as usize)
+//     });
+//
+//     let client_auth_ca_data = utils::convert_ptr_to_vec(client_auth_ca_data_ptr, client_auth_ca_data_len);
+//
+//     match config::get_server_config(&cert_data, &key_data, client_auth_ca_data.as_ref()) {
+//         Ok(server_config) => {
+//             unsafe {
+//                 *status = Status::Pass
+//             };
+//             Box::into_raw(Box::new(Server::new(server_config)))
+//         }
+//         Err(_) => {
+//             unsafe {
+//                 *status = Status::Fail;
+//             }
+//             std::ptr::null_mut()
+//         }
+//     }
+// }
+
 #[no_mangle]
-pub extern "C" fn fasttls_server_session(status: *mut Status, server: *mut Server) -> *mut ServerSession {
+pub extern "C" fn fasttls_server_session(status: *mut Status, server: *mut Server) -> *mut session::Session {
     Status::check_not_null(status);
 
     if server.is_null() {
@@ -147,7 +191,7 @@ pub extern "C" fn fasttls_server_session(status: *mut Status, server: *mut Serve
 }
 
 #[no_mangle]
-pub extern "C" fn fasttls_free_server_session(server_session: *mut ServerSession) {
+pub extern "C" fn fasttls_free_server_session(server_session: *mut session::Session) {
     if !server_session.is_null() {
         unsafe {
             drop(Box::from_raw(server_session));
@@ -156,7 +200,7 @@ pub extern "C" fn fasttls_free_server_session(server_session: *mut ServerSession
 }
 
 #[no_mangle]
-pub extern "C" fn fasttls_server_handshake(status: *mut Status, server_session: *mut ServerSession, input_data_ptr: *mut u8, input_data_len: u32) -> *mut HandshakeResult {
+pub extern "C" fn fasttls_server_handshake(status: *mut Status, server_session: *mut session::Session, input_data_ptr: *mut u8, input_data_len: u32) -> *mut HandshakeResult {
     Status::check_not_null(status);
 
     if server_session.is_null() {
@@ -209,7 +253,7 @@ pub extern "C" fn fasttls_free_handshake(handshake: *mut HandshakeResult) {
 }
 
 #[no_mangle]
-pub extern "C" fn fasttls_server_secrets(status: *mut Status, server_session: *mut ServerSession) -> *mut handshake::Secrets {
+pub extern "C" fn fasttls_server_secrets(status: *mut Status, server_session: *mut session::Session) -> *mut handshake::Secrets {
     Status::check_not_null(status);
 
     if server_session.is_null() {
@@ -247,7 +291,7 @@ pub extern "C" fn fasttls_free_secrets(handshake_secrets: *mut handshake::Secret
 }
 
 #[no_mangle]
-pub extern "C" fn fasttls_server_read_plaintext(status: *mut Status, server_session: *mut ServerSession) -> *mut Buffer {
+pub extern "C" fn fasttls_server_read_plaintext(status: *mut Status, server_session: *mut session::Session) -> *mut Buffer {
     Status::check_not_null(status);
 
     if server_session.is_null() {

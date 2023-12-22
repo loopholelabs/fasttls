@@ -24,6 +24,7 @@ pub struct TestPki {
 }
 
 impl TestPki {
+    #[allow(dead_code)]
     pub(crate) fn new() -> Self {
         let alg = &rcgen::PKCS_ECDSA_P256_SHA256;
         let mut ca_params = rcgen::CertificateParams::new(Vec::new());

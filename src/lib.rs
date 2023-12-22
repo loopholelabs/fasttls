@@ -21,22 +21,17 @@ mod testpki;
 mod ffi;
 mod handshake;
 mod utils;
+mod cipher;
+mod session;
 
 use std::error::Error;
-use std::io::{Cursor, Read, Write};
 use std::sync::Arc;
 
-use rustls::{ServerConfig, SupportedCipherSuite};
-use rustls::server::ServerConnection;
+use rustls::{ClientConfig, ServerConfig};
 
 pub struct Server {
-    config: Arc<ServerConfig>,
+    pub config: Arc<ServerConfig>,
 }
-
-pub struct ServerSession {
-    session: ServerConnection,
-}
-
 impl Server {
     pub fn new(config: ServerConfig) -> Self {
         Server {
@@ -44,127 +39,36 @@ impl Server {
         }
     }
 
-    pub fn session(&self) -> Result<ServerSession, Box<dyn Error>> {
-        let mut server_session = ServerSession {
-            session: ServerConnection::new(self.config.clone())
-                .map_err(|err| -> Box<dyn Error> {
-                    format!("failed to create session: {}", err.to_string()).into()
-                })?
-        };
-        server_session.session.set_buffer_limit(None);
+    pub fn session(&self) -> Result<session::Session, Box<dyn Error>> {
+        let server_session = session::Session::new_server(self.config.clone())?;
         Ok(server_session)
     }
 }
 
-impl ServerSession {
-    // read_tls reads TLS bytes from the given reader into the session object
-    fn read_tls(&mut self, reader: &mut dyn Read) -> Result<(), Box<dyn Error>> {
-        self.session.read_tls(reader).map_err(|err| -> Box<dyn Error> { format!("failed to read encrypted data: {}", err.to_string()).into() })?;
-        self.session.process_new_packets().map_err(|err| -> Box<dyn Error> { format!("failed to process new packets: {}", err.to_string()).into() })?;
-        Ok(())
-    }
-
-    // read_plaintext reads TLS bytes from the session and returns a vector of bytes
-    fn read_plaintext(&mut self) -> Result<Box<[u8]>, Box<dyn Error>> {
-        let mut reader = self.session.reader();
-        let mut plaintext_bytes = vec![];
-        loop {
-            let mut buffer = [0; 1024];
-            match reader.read(&mut buffer) {
-                Ok(read_bytes) => {
-                    if read_bytes > 0 {
-                        plaintext_bytes.extend_from_slice(&buffer[..read_bytes]);
-                        continue;
-                    }
-                    break;
-                }
-                Err(err) => {
-                    if err.kind() == std::io::ErrorKind::WouldBlock {
-                        break;
-                    }
-                    return Err(format!("failed to read plaintext data: {}", err.to_string()).into());
-                }
-            }
+pub struct Client {
+    pub config: Arc<ClientConfig>
+}
+impl Client {
+    pub fn new(config: ClientConfig) -> Self {
+        Client {
+            config: Arc::new(config),
         }
-        Ok(plaintext_bytes.into_boxed_slice())
     }
 
-    // write_tls writes TLS bytes from the given writer into the session object
-    fn write_tls(&mut self, writer: &mut dyn Write) -> Result<(), Box<dyn Error>> {
-        while self.session.wants_write() {
-            self.session.write_tls(writer).map_err(|err| -> Box<dyn Error> { format!("failed to write encrypted data: {}", err.to_string()).into() })?;
-        }
-        Ok(())
-    }
-
-    // write_plaintext writes plaintext bytes into the session object
-    fn write_plaintext(&mut self, data: &[u8]) -> Result<(), Box<dyn Error>> {
-        let mut writer = self.session.writer();
-        writer.write(data).map_err(|err| -> Box<dyn Error> { format!("failed to write plaintext data: {}", err.to_string()).into() })?;
-        Ok(())
-    }
-
-    pub fn handshake(&mut self, input: Option<&[u8]>) -> Result<handshake::Result, Box<dyn Error>> {
-        if self.session.is_handshaking() {
-            if self.session.wants_read() {
-                match input {
-                    None => {
-                        return Ok(handshake::Result { state: handshake::State::NeedRead, output: None });
-                    }
-                    Some(input) => {
-                        self.read_tls(&mut Cursor::new(input))?;
-                        if self.session.is_handshaking() && self.session.wants_read() {
-                            return Ok(handshake::Result { state: handshake::State::NeedRead, output: None });
-                        }
-                    }
-                };
-            }
-            if self.session.is_handshaking() && self.session.wants_write() {
-                let mut output = vec![];
-                self.write_tls(&mut output)?;
-                return if self.session.is_handshaking() {
-                    Ok(handshake::Result { state: handshake::State::NeedWrite, output: Some(output) })
-                } else {
-                    Ok(handshake::Result { state: handshake::State::Complete, output: Some(output) })
-                }
-            }
-        } else if input.is_some() {
-            return Err("session is not in handshaking state but input data was available".into());
-        }
-        Ok(handshake::Result { state: handshake::State::Complete, output: None})
-    }
-
-    pub fn secrets(self) -> Result<handshake::Secrets, Box<dyn Error>> {
-        let cipher_suite = self.session.negotiated_cipher_suite().ok_or("failed to get cipher suite")?;
-        let tls_version = match cipher_suite {
-            SupportedCipherSuite::Tls12(..) => constants::TLS_1_2_VERSION_NUMBER,
-            SupportedCipherSuite::Tls13(..) => constants::TLS_1_3_VERSION_NUMBER,
-        };
-
-        let secrets = self.session.dangerous_extract_secrets().map_err(|err| -> Box<dyn Error> { format!("failed to extract secrets: {}", err.to_string()).into() })?;
-
-        let (rx_seq, rx_secrets) = secrets.rx;
-        let rx_crypto_secret = crypto::convert_to_secret(tls_version, rx_seq, rx_secrets)?;
-
-        let (tx_seq, tx_secrets) = secrets.tx;
-        let tx_crypto_secret = crypto::convert_to_secret(tls_version, tx_seq, tx_secrets)?;
-
-        Ok(handshake::Secrets {
-            rx: rx_crypto_secret,
-            tx: tx_crypto_secret,
-        })
+    pub fn session(&self, server_name: &'static str) -> Result<session::Session, Box<dyn Error>> {
+        let client_session = session::Session::new_client(self.config.clone(), server_name)?;
+        Ok(client_session)
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use std::net::{TcpListener, TcpStream};
     use std::thread;
-    use std::io::Write;
+    use std::io::{Read, Write};
     use std::time::Duration;
-
-    use rustls::client::ClientConnection;
 
     fn read_from_reader(reader: &mut dyn Read) -> Result<Vec<u8>, Box<dyn Error>> {
         let mut receive_data = vec![];
@@ -211,18 +115,13 @@ mod tests {
         Ok(())
     }
 
-    fn do_client_io<T>(connection: &mut T, send_data: &[u8]) -> Vec<u8> where T: Read + Write {
-        write_to_writer(connection, send_data).unwrap();
-        read_from_reader(connection).unwrap()
-    }
-
-    fn do_server_handshake<T>(connection: &mut T, server_session: &mut ServerSession) where T: Read + Write {
+    fn do_server_handshake<T>(connection: &mut T, session: &mut session::Session) where T: Read + Write {
         loop {
             let encrypted_data = read_from_reader(connection).unwrap();
             let handshake = if encrypted_data.len() == 0 {
-                server_session.handshake(None).unwrap()
+                session.handshake(None).unwrap()
             } else {
-                server_session.handshake(Some(&encrypted_data)).unwrap()
+                session.handshake(Some(&encrypted_data)).unwrap()
             };
             match handshake.state {
                 handshake::State::NeedRead => {}
@@ -239,25 +138,31 @@ mod tests {
                 }
             }
         }
-        println!("Server handshake complete");
     }
 
-    fn do_server_io<T>(connection: &mut T, server_session: &mut ServerSession) where T: Read + Write {
-        let mut plaintext_bytes = server_session.read_plaintext().unwrap();
-        if plaintext_bytes.len() > 0 {
-            server_session.write_plaintext(plaintext_bytes.as_ref()).unwrap();
-            server_session.write_tls(connection).unwrap();
-            connection.flush().unwrap();
-        }
+    fn do_client_handshake<T>(connection: &mut T, session: &mut session::Session) where T: Read + Write {
+        let mut handshake = session.handshake(None).unwrap();
         loop {
-            let receive_data = read_from_reader(connection).unwrap();
-            if receive_data.len() == 0 {
-                break;
+            match handshake.state {
+                handshake::State::NeedRead => {}
+                handshake::State::NeedWrite | handshake::State::Complete => {
+                    match handshake.output {
+                        None => {}
+                        Some(ref output) => {
+                            write_to_writer(connection, output.as_slice()).unwrap();
+                        }
+                    }
+                    if handshake.state == handshake::State::Complete {
+                        break;
+                    }
+                }
             }
-            server_session.read_tls(&mut Cursor::new(receive_data)).unwrap();
-            plaintext_bytes = server_session.read_plaintext().unwrap();
-            server_session.write_plaintext(plaintext_bytes.as_ref()).unwrap();
-            server_session.write_tls(connection).unwrap();
+            let encrypted_data = read_from_reader(connection).unwrap();
+            handshake = if encrypted_data.len() == 0 {
+                session.handshake(None).unwrap()
+            } else {
+                session.handshake(Some(&encrypted_data)).unwrap()
+            };
         }
     }
 
@@ -268,39 +173,123 @@ mod tests {
         let client_config = config::get_client_config(Some(&test_pki.ca_cert), Some((&test_pki.client_cert, &test_pki.client_key))).unwrap();
         let server_config = config::get_server_config(&test_pki.server_cert, &test_pki.server_key, Some(&test_pki.ca_cert)).unwrap();
         let server = Server::new(server_config);
+        let client = Client::new(client_config);
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let listen_address = listener.local_addr().unwrap().to_string();
 
-        let client_handle = thread::spawn(|| {
-            println!("Client initiating connection");
-            let mut client_session = ClientConnection::new(client_config.into(), "localhost".try_into().unwrap()).unwrap();
-            let mut client_socket = TcpStream::connect(listen_address).unwrap();
+        let mut client_session = client.session("localhost").unwrap();
+        let client_handle = thread::spawn(move || {
+            println!("client initiating connection");
+            let mut client_socket = TcpStream::connect(listen_address.clone()).unwrap();
             client_socket.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
             client_socket.set_write_timeout(Some(Duration::from_millis(50))).unwrap();
-            let mut client = rustls::Stream::new(&mut client_session, &mut client_socket);
-            for i in 0..10 {
-                let send_data = format!("message #{}", i);
-                println!("Client sending: {}", send_data);
-                let receive_data = do_client_io(&mut client, send_data.as_bytes());
-                println!("Client received: {}", std::str::from_utf8(&receive_data).unwrap());
-            }
-            println!("Client closing connection");
-            client.conn.send_close_notify();
-            _ = client.flush();
-            _ = client.sock.shutdown(std::net::Shutdown::Both);
-        });
 
-        let mut server_socket = listener.incoming().next().unwrap().unwrap();
-        server_socket.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
-        server_socket.set_write_timeout(Some(Duration::from_millis(50))).unwrap();
+            println!("client initiating handshake");
+            do_client_handshake(&mut client_socket, &mut client_session);
+            println!("client handshake complete");
+
+            for i in 0..10 {
+                let message = format!("message #{}", i);
+                println!("client sending: {}", message);
+                client_session.write_plaintext(message.as_bytes()).unwrap();
+
+                loop {
+                    match client_session.write_tls(&mut client_socket) {
+                        Ok(_) => {
+                            break;
+                        }
+                        Err(err) => {
+                            if err.to_string().contains("Resource temporarily unavailable") {
+                                continue;
+                            }
+                            panic!("error writing data to client: {}", err);
+                        }
+                    }
+                }
+                match client_socket.flush() {
+                    Ok(_) => {}
+                    Err(err) => {
+                        panic!("error flushing bytes to client: {}", err);
+                    }
+                };
+
+                loop {
+                    match client_session.read_tls(&mut client_socket) {
+                        Ok(()) => break,
+                        Err(err) => {
+                            if err.to_string().contains("Resource temporarily unavailable") {
+                                continue;
+                            }
+                            panic!("error reading data from client: {}", err);
+                        }
+                    }
+                }
+
+                let message = client_session.read_plaintext().unwrap();
+                println!("client received: {}", std::str::from_utf8(&message).unwrap());
+            }
+
+            println!("client closing connection");
+            client_session.send_close_notify();
+            _ = client_session.write_tls(&mut client_socket);
+            _ = client_socket.flush();
+            _ = client_socket.shutdown(std::net::Shutdown::Both);
+        });
 
         let mut server_session = server.session().unwrap();
         let server_handle = thread::spawn(move || {
+            println!("server initiating connection");
+            let mut server_socket = listener.incoming().next().unwrap().unwrap();
+            server_socket.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
+            server_socket.set_write_timeout(Some(Duration::from_millis(50))).unwrap();
+
+            println!("server initiating handshake");
             do_server_handshake(&mut server_socket, &mut server_session);
-            do_server_io(&mut server_socket, &mut server_session);
-            server_session.session.send_close_notify();
-            _ = server_session.session.write_tls(&mut server_socket);
+            println!("server handshake complete");
+
+            for _i in 0..10 {
+                loop {
+                    match server_session.read_tls(&mut server_socket) {
+                        Ok(()) => break,
+                        Err(err) => {
+                            if err.to_string().contains("Resource temporarily unavailable") {
+                                break;
+                            }
+                            panic!("error reading data from server: {}", err);
+                        }
+                    }
+                }
+                let message = server_session.read_plaintext().unwrap();
+                println!("server received: {}", std::str::from_utf8(&message).unwrap());
+
+                server_session.write_plaintext(&message).unwrap();
+
+                loop {
+                    match server_session.write_tls(&mut server_socket) {
+                        Ok(_) => {
+                            break;
+                        }
+                        Err(err) => {
+                            if err.to_string().contains("Resource temporarily unavailable") {
+                                continue;
+                            }
+                            panic!("error writing data to server: {}", err);
+                        }
+                    }
+                }
+                match server_socket.flush() {
+                    Ok(_) => {}
+                    Err(err) => {
+                        panic!("error flushing bytes to server: {}", err);
+                    }
+                };
+
+            }
+
+            println!("server closing connection");
+            server_session.send_close_notify();
+            _ = server_session.write_tls(&mut server_socket);
             _ = server_socket.flush();
             _ = server_socket.shutdown(std::net::Shutdown::Both);
         });
