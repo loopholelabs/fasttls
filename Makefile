@@ -6,6 +6,8 @@ VERSION_MICRO=$(shell echo $(VERSION) | cut -c6)
 CLIB_HEADER=fasttls.h
 CLIB_PKG_CONFIG=fasttls.pc
 PREFIX ?= /usr/local
+CC='gcc'
+CXX='g++'
 
 OS_NAME := $(shell uname -s | tr A-Z a-z)
 
@@ -30,8 +32,6 @@ headers: $(CLIB_HEADER) $(CLIB_PKG_CONFIG)
 .PHONY: build
 build:
 	cargo build --release
-	rm -rf ./main
-	CC='gcc' CXX='g++' go build main.go
 
 .PHONY: $(CLIB_HEADER)
 $(CLIB_HEADER): $(CLIB_HEADER).in
