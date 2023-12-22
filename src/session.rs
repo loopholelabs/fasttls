@@ -119,12 +119,17 @@ impl Session {
         })
     }
 
-    // read_tls reads TLS bytes from the given reader into the session object
-    pub fn read_tls(&mut self, reader: &mut dyn Read) -> Result<(), Box<dyn Error>> {
+    // read_tls_from_reader reads TLS bytes from the given reader into the session object
+    pub fn read_tls_from_reader(&mut self, reader: &mut dyn Read) -> Result<(), Box<dyn Error>> {
         self.session.read_tls(reader).map_err(|err| -> Box<dyn Error> { format!("failed to read encrypted data: {}", err.to_string()).into() })?;
         let session_state = self.session.process_new_packets().map_err(|err| -> Box<dyn Error> { format!("failed to process new packets: {}", err.to_string()).into() })?;
         self.plaintext_bytes = session_state.plaintext_bytes_to_read();
         Ok(())
+    }
+
+    // read_tls reads TLS bytes into the session object
+    pub fn read_tls(&mut self, data: &[u8]) -> Result<(), Box<dyn Error>> {
+        self.read_tls_from_reader(&mut Cursor::new(data))
     }
 
     // read_plaintext reads TLS bytes from the session and returns a vector of bytes
@@ -145,12 +150,19 @@ impl Session {
         Ok(plaintext_bytes.into_boxed_slice())
     }
 
-    // write_tls writes TLS bytes from the given writer into the session object
-    pub fn write_tls(&mut self, writer: &mut dyn Write) -> Result<(), Box<dyn Error>> {
+    // write_tls_to_writer writes TLS bytes from the given writer into the session object
+    pub fn write_tls_to_writer(&mut self, writer: &mut dyn Write) -> Result<(), Box<dyn Error>> {
         while self.session.wants_write() {
             self.session.write_tls(writer).map_err(|err| -> Box<dyn Error> { format!("failed to write encrypted data: {}", err.to_string()).into() })?;
         }
         Ok(())
+    }
+
+    // write_tls returns TLS bytes from the session object
+    pub fn write_tls(&mut self) -> Result<Box<[u8]>, Box<dyn Error>> {
+        let mut buffer = Vec::new();
+        self.write_tls_to_writer(&mut Cursor::new(&mut buffer))?;
+        Ok(buffer.into_boxed_slice())
     }
 
     // write_plaintext writes plaintext bytes into the session object
@@ -168,7 +180,7 @@ impl Session {
                         return Ok(handshake::Result { state: handshake::State::NeedRead, output: None });
                     }
                     Some(input) => {
-                        self.read_tls(&mut Cursor::new(input))?;
+                        self.read_tls_from_reader(&mut Cursor::new(input))?;
                         if self.session.is_handshaking() && self.session.wants_read() {
                             return Ok(handshake::Result { state: handshake::State::NeedRead, output: None });
                         }
@@ -177,7 +189,7 @@ impl Session {
             }
             if self.session.is_handshaking() && self.session.wants_write() {
                 let mut output = vec![];
-                self.write_tls(&mut output)?;
+                self.write_tls_to_writer(&mut output)?;
                 return if self.session.is_handshaking() {
                     Ok(handshake::Result { state: handshake::State::NeedWrite, output: Some(output) })
                 } else {

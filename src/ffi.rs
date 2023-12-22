@@ -16,7 +16,8 @@
 
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-use crate::{config, constants, crypto, handshake, Server, session, utils};
+use std::ffi::CStr;
+use crate::{Client, config, constants, crypto, handshake, Server, session, utils};
 use rustls::{internal::msgs::{enums::AlertLevel, message::Message}, AlertDescription};
 
 #[repr(u8)]
@@ -119,50 +120,6 @@ pub extern "C" fn fasttls_free_server(server: *mut Server) {
     }
 }
 
-// #[no_mangle]
-// pub extern "C" fn fasttls_client(status: *mut Status, cert_data_ptr: *mut u8, cert_data_len: u32, key_data_ptr: *mut u8, key_data_len: u32, client_auth_ca_data_ptr: *mut u8, client_auth_ca_data_len: u32) -> *mut Client {
-//     Status::check_not_null(status);
-//
-//     if cert_data_ptr.is_null() || cert_data_len == 0 {
-//         unsafe {
-//             *status = Status::NullPointer;
-//         }
-//         return std::ptr::null_mut();
-//     }
-//
-//     if key_data_ptr.is_null() || key_data_len == 0 {
-//         unsafe {
-//             *status = Status::NullPointer;
-//         }
-//         return std::ptr::null_mut();
-//     }
-//
-//     let cert_data = Vec::from(unsafe {
-//         std::slice::from_raw_parts(cert_data_ptr, cert_data_len as usize)
-//     });
-//
-//     let key_data = Vec::from(unsafe {
-//         std::slice::from_raw_parts(key_data_ptr, key_data_len as usize)
-//     });
-//
-//     let client_auth_ca_data = utils::convert_ptr_to_vec(client_auth_ca_data_ptr, client_auth_ca_data_len);
-//
-//     match config::get_server_config(&cert_data, &key_data, client_auth_ca_data.as_ref()) {
-//         Ok(server_config) => {
-//             unsafe {
-//                 *status = Status::Pass
-//             };
-//             Box::into_raw(Box::new(Server::new(server_config)))
-//         }
-//         Err(_) => {
-//             unsafe {
-//                 *status = Status::Fail;
-//             }
-//             std::ptr::null_mut()
-//         }
-//     }
-// }
-
 #[no_mangle]
 pub extern "C" fn fasttls_server_session(status: *mut Status, server: *mut Server) -> *mut session::Session {
     Status::check_not_null(status);
@@ -191,19 +148,106 @@ pub extern "C" fn fasttls_server_session(status: *mut Status, server: *mut Serve
 }
 
 #[no_mangle]
-pub extern "C" fn fasttls_free_server_session(server_session: *mut session::Session) {
-    if !server_session.is_null() {
-        unsafe {
-            drop(Box::from_raw(server_session));
+pub extern "C" fn fasttls_client(status: *mut Status, ca_data_ptr: *mut u8, ca_data_len: u32, client_auth_cert_data_ptr: *mut u8, client_auth_cert_data_len: u32, client_auth_key_data_ptr: *mut u8, client_auth_key_data_len: u32) -> *mut Client {
+    Status::check_not_null(status);
+
+    let ca_data = utils::convert_ptr_to_vec(ca_data_ptr, ca_data_len);
+
+    let client_auth_data = if client_auth_cert_data_ptr.is_null() || client_auth_cert_data_len == 0 || client_auth_key_data_ptr.is_null() || client_auth_key_data_len == 0 {
+        None
+    } else {
+        let cert_data = unsafe {
+            Vec::from(std::slice::from_raw_parts(client_auth_cert_data_ptr, client_auth_cert_data_len as usize))
+        };
+        let key_data = unsafe {
+            Vec::from(std::slice::from_raw_parts(client_auth_key_data_ptr, client_auth_key_data_len as usize))
+        };
+        Some((cert_data, key_data))
+    };
+
+    match config::get_client_config(ca_data.as_ref(), client_auth_data.as_ref()) {
+        Ok(client_config) => {
+            unsafe {
+                *status = Status::Pass
+            };
+            Box::into_raw(Box::new(Client::new(client_config)))
+        }
+        Err(_) => {
+            unsafe {
+                *status = Status::Fail;
+            }
+            std::ptr::null_mut()
         }
     }
 }
 
 #[no_mangle]
-pub extern "C" fn fasttls_server_handshake(status: *mut Status, server_session: *mut session::Session, input_data_ptr: *mut u8, input_data_len: u32) -> *mut HandshakeResult {
+pub extern "C" fn fasttls_free_client(client: *mut Client) {
+    if !client.is_null() {
+        unsafe {
+            drop(Box::from_raw(client));
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn fasttls_client_session(status: *mut Status, client: *mut Client, server_name: *const i8) -> *mut session::Session {
     Status::check_not_null(status);
 
-    if server_session.is_null() {
+    if client.is_null() {
+        unsafe {
+            *status = Status::NullPointer;
+        }
+        return std::ptr::null_mut();
+    }
+
+    if server_name.is_null() {
+        unsafe {
+            *status = Status::NullPointer;
+        }
+        return std::ptr::null_mut();
+    }
+
+    let server_name = match unsafe { CStr::from_ptr(server_name) }.to_str() {
+        Ok(server_name) => server_name,
+        Err(_) => {
+            unsafe {
+                *status = Status::Fail;
+            }
+            return std::ptr::null_mut();
+        }
+    };
+
+    match unsafe { (&*client).session(server_name) } {
+        Ok(client_session) => {
+            unsafe {
+                *status = Status::Pass
+            };
+            Box::into_raw(Box::new(client_session))
+        }
+        Err(_) => {
+            unsafe {
+                *status = Status::Fail;
+            }
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn fasttls_free_session(session: *mut session::Session) {
+    if !session.is_null() {
+        unsafe {
+            drop(Box::from_raw(session));
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn fasttls_handshake(status: *mut Status, session: *mut session::Session, input_data_ptr: *mut u8, input_data_len: u32) -> *mut HandshakeResult {
+    Status::check_not_null(status);
+
+    if session.is_null() {
         unsafe {
             *status = Status::NullPointer;
         }
@@ -212,7 +256,7 @@ pub extern "C" fn fasttls_server_handshake(status: *mut Status, server_session: 
 
     let input_data = utils::convert_ptr_to_slice(input_data_ptr, input_data_len);
 
-    match unsafe { (&mut *server_session).handshake(input_data) } {
+    match unsafe { (&mut *session).handshake(input_data) } {
         Ok(handshake_result) => {
             unsafe {
                 *status = Status::Pass
@@ -253,19 +297,19 @@ pub extern "C" fn fasttls_free_handshake(handshake: *mut HandshakeResult) {
 }
 
 #[no_mangle]
-pub extern "C" fn fasttls_server_secrets(status: *mut Status, server_session: *mut session::Session) -> *mut handshake::Secrets {
+pub extern "C" fn fasttls_secrets(status: *mut Status, session: *mut session::Session) -> *mut handshake::Secrets {
     Status::check_not_null(status);
 
-    if server_session.is_null() {
+    if session.is_null() {
         unsafe {
             *status = Status::NullPointer;
         }
         return std::ptr::null_mut();
     }
 
-    let server_session = unsafe { Box::from_raw(server_session) };
+    let session = unsafe { Box::from_raw(session) };
 
-    match server_session.secrets() {
+    match session.secrets() {
         Ok(handshake_secrets) => {
             unsafe {
                 *status = Status::Pass
@@ -291,17 +335,17 @@ pub extern "C" fn fasttls_free_secrets(handshake_secrets: *mut handshake::Secret
 }
 
 #[no_mangle]
-pub extern "C" fn fasttls_server_read_plaintext(status: *mut Status, server_session: *mut session::Session) -> *mut Buffer {
+pub extern "C" fn fasttls_read_plaintext(status: *mut Status, session: *mut session::Session) -> *mut Buffer {
     Status::check_not_null(status);
 
-    if server_session.is_null() {
+    if session.is_null() {
         unsafe {
             *status = Status::NullPointer;
         }
         return std::ptr::null_mut();
     }
 
-    match unsafe { (&mut *server_session).read_plaintext() } {
+    match unsafe { (&mut *session).read_plaintext() } {
         Ok(data) => {
             unsafe {
                 *status = Status::Pass
@@ -310,6 +354,113 @@ pub extern "C" fn fasttls_server_read_plaintext(status: *mut Status, server_sess
                 let mut boxed_data = Box::new(data);
                 let buffer = Buffer::boxed_raw(boxed_data.as_mut_ptr(), boxed_data.len() as u32);
                 std::mem::forget(boxed_data);
+                return buffer;
+            }
+            Buffer::boxed_raw(std::ptr::null_mut(), 0)
+
+        }
+        Err(_) => {
+            unsafe {
+                *status = Status::Fail;
+            }
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn fasttls_read_tls(status: *mut Status, session: *mut session::Session, data_ptr: *mut u8, data_len: u32) {
+    Status::check_not_null(status);
+
+    if session.is_null() {
+        unsafe {
+            *status = Status::NullPointer;
+        }
+        return;
+    }
+
+    if data_ptr.is_null() || data_len == 0 {
+        unsafe {
+            *status = Status::NullPointer;
+        }
+        return;
+    }
+
+    let data = unsafe {
+        std::slice::from_raw_parts(data_ptr, data_len as usize)
+    };
+
+    match unsafe { (&mut *session).read_tls(data) } {
+        Ok(_) => {
+            unsafe {
+                *status = Status::Pass
+            };
+
+        }
+        Err(_) => {
+            unsafe {
+                *status = Status::Fail;
+            }
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn fasttls_write_plaintext(status: *mut Status, session: *mut session::Session, data_ptr: *mut u8, data_len: u32) {
+    Status::check_not_null(status);
+
+    if session.is_null() {
+        unsafe {
+            *status = Status::NullPointer;
+        }
+        return;
+    }
+
+    if data_ptr.is_null() || data_len == 0 {
+        unsafe {
+            *status = Status::NullPointer;
+        }
+        return;
+    }
+
+    let data = unsafe {
+        std::slice::from_raw_parts(data_ptr, data_len as usize)
+    };
+
+    match unsafe { (&mut *session).write_plaintext(data) } {
+        Ok(_) => {
+            unsafe {
+                *status = Status::Pass
+            };
+
+        }
+        Err(_) => {
+            unsafe {
+                *status = Status::Fail;
+            }
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn fasttls_write_tls(status: *mut Status, session: *mut session::Session) -> *mut Buffer {
+    Status::check_not_null(status);
+
+    if session.is_null() {
+        unsafe {
+            *status = Status::NullPointer;
+        }
+        return std::ptr::null_mut();
+    }
+
+    match unsafe { (&mut *session).write_tls() } {
+        Ok(mut data) => {
+            unsafe {
+                *status = Status::Pass
+            };
+            if data.len() > 0 {
+                let buffer = Buffer::boxed_raw(data.as_mut_ptr(), data.len() as u32);
+                std::mem::forget(data);
                 return buffer;
             }
             Buffer::boxed_raw(std::ptr::null_mut(), 0)

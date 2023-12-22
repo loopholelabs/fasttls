@@ -22,7 +22,7 @@ use rustls::{ServerConfig, RootCertStore, ClientConfig};
 
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 
-pub fn get_client_config(ca_data: Option<&Vec<u8>>, client_cert: Option<(&Vec<u8>, &Vec<u8>)>) -> Result<ClientConfig, Box<dyn Error>> {
+pub fn get_client_config(ca_data: Option<&Vec<u8>>, client_cert: Option<&(Vec<u8>, Vec<u8>)>) -> Result<ClientConfig, Box<dyn Error>> {
     let ca_store = match ca_data {
         None => {
             let mut root_store = RootCertStore::empty();
@@ -141,6 +141,6 @@ mod tests {
     #[test]
     fn test_get_client_config() {
         let test_pki = testpki::TestPki::new();
-        get_client_config(Some(&test_pki.ca_cert), Some((&test_pki.client_cert, &test_pki.client_key))).unwrap();
+        get_client_config(Some(&test_pki.ca_cert), Some(&(test_pki.client_cert, test_pki.client_key))).unwrap();
     }
 }

@@ -170,7 +170,7 @@ mod tests {
     fn test_do_handshake() {
         let test_pki = testpki::TestPki::new();
 
-        let client_config = config::get_client_config(Some(&test_pki.ca_cert), Some((&test_pki.client_cert, &test_pki.client_key))).unwrap();
+        let client_config = config::get_client_config(Some(&test_pki.ca_cert), Some(&(test_pki.client_cert, test_pki.client_key))).unwrap();
         let server_config = config::get_server_config(&test_pki.server_cert, &test_pki.server_key, Some(&test_pki.ca_cert)).unwrap();
         let server = Server::new(server_config);
         let client = Client::new(client_config);
@@ -195,7 +195,7 @@ mod tests {
                 client_session.write_plaintext(message.as_bytes()).unwrap();
 
                 loop {
-                    match client_session.write_tls(&mut client_socket) {
+                    match client_session.write_tls_to_writer(&mut client_socket) {
                         Ok(_) => {
                             break;
                         }
@@ -215,7 +215,7 @@ mod tests {
                 };
 
                 loop {
-                    match client_session.read_tls(&mut client_socket) {
+                    match client_session.read_tls_from_reader(&mut client_socket) {
                         Ok(()) => break,
                         Err(err) => {
                             if err.to_string().contains("Resource temporarily unavailable") {
@@ -232,7 +232,7 @@ mod tests {
 
             println!("client closing connection");
             client_session.send_close_notify();
-            _ = client_session.write_tls(&mut client_socket);
+            _ = client_session.write_tls_to_writer(&mut client_socket);
             _ = client_socket.flush();
             _ = client_socket.shutdown(std::net::Shutdown::Both);
         });
@@ -250,7 +250,7 @@ mod tests {
 
             for _i in 0..10 {
                 loop {
-                    match server_session.read_tls(&mut server_socket) {
+                    match server_session.read_tls_from_reader(&mut server_socket) {
                         Ok(()) => break,
                         Err(err) => {
                             if err.to_string().contains("Resource temporarily unavailable") {
@@ -266,7 +266,7 @@ mod tests {
                 server_session.write_plaintext(&message).unwrap();
 
                 loop {
-                    match server_session.write_tls(&mut server_socket) {
+                    match server_session.write_tls_to_writer(&mut server_socket) {
                         Ok(_) => {
                             break;
                         }
@@ -289,7 +289,7 @@ mod tests {
 
             println!("server closing connection");
             server_session.send_close_notify();
-            _ = server_session.write_tls(&mut server_socket);
+            _ = server_session.write_tls_to_writer(&mut server_socket);
             _ = server_socket.flush();
             _ = server_socket.shutdown(std::net::Shutdown::Both);
         });
