@@ -121,33 +121,6 @@ pub extern "C" fn fasttls_free_server(server: *mut Server) {
 }
 
 #[no_mangle]
-pub extern "C" fn fasttls_server_session(status: *mut Status, server: *mut Server) -> *mut session::Session {
-    Status::check_not_null(status);
-
-    if server.is_null() {
-        unsafe {
-            *status = Status::NullPointer;
-        }
-        return std::ptr::null_mut();
-    }
-
-    match unsafe { (&*server).session() } {
-        Ok(server_session) => {
-            unsafe {
-                *status = Status::Pass
-            };
-            Box::into_raw(Box::new(server_session))
-        }
-        Err(_) => {
-            unsafe {
-                *status = Status::Fail;
-            }
-            std::ptr::null_mut()
-        }
-    }
-}
-
-#[no_mangle]
 pub extern "C" fn fasttls_client(status: *mut Status, ca_data_ptr: *mut u8, ca_data_len: u32, client_auth_cert_data_ptr: *mut u8, client_auth_cert_data_len: u32, client_auth_key_data_ptr: *mut u8, client_auth_key_data_len: u32) -> *mut Client {
     Status::check_not_null(status);
 
@@ -186,6 +159,33 @@ pub extern "C" fn fasttls_free_client(client: *mut Client) {
     if !client.is_null() {
         unsafe {
             drop(Box::from_raw(client));
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn fasttls_server_session(status: *mut Status, server: *mut Server) -> *mut session::Session {
+    Status::check_not_null(status);
+
+    if server.is_null() {
+        unsafe {
+            *status = Status::NullPointer;
+        }
+        return std::ptr::null_mut();
+    }
+
+    match unsafe { (&*server).session() } {
+        Ok(server_session) => {
+            unsafe {
+                *status = Status::Pass
+            };
+            Box::into_raw(Box::new(server_session))
+        }
+        Err(_) => {
+            unsafe {
+                *status = Status::Fail;
+            }
+            std::ptr::null_mut()
         }
     }
 }
@@ -335,40 +335,6 @@ pub extern "C" fn fasttls_free_secrets(handshake_secrets: *mut handshake::Secret
 }
 
 #[no_mangle]
-pub extern "C" fn fasttls_read_plaintext(status: *mut Status, session: *mut session::Session) -> *mut Buffer {
-    Status::check_not_null(status);
-
-    if session.is_null() {
-        unsafe {
-            *status = Status::NullPointer;
-        }
-        return std::ptr::null_mut();
-    }
-
-    match unsafe { (&mut *session).read_plaintext() } {
-        Ok(data) => {
-            unsafe {
-                *status = Status::Pass
-            };
-            if data.len() > 0 {
-                let mut boxed_data = Box::new(data);
-                let buffer = Buffer::boxed_raw(boxed_data.as_mut_ptr(), boxed_data.len() as u32);
-                std::mem::forget(boxed_data);
-                return buffer;
-            }
-            Buffer::boxed_raw(std::ptr::null_mut(), 0)
-
-        }
-        Err(_) => {
-            unsafe {
-                *status = Status::Fail;
-            }
-            std::ptr::null_mut()
-        }
-    }
-}
-
-#[no_mangle]
 pub extern "C" fn fasttls_read_tls(status: *mut Status, session: *mut session::Session, data_ptr: *mut u8, data_len: u32) {
     Status::check_not_null(status);
 
@@ -438,6 +404,40 @@ pub extern "C" fn fasttls_write_plaintext(status: *mut Status, session: *mut ses
             unsafe {
                 *status = Status::Fail;
             }
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn fasttls_read_plaintext(status: *mut Status, session: *mut session::Session) -> *mut Buffer {
+    Status::check_not_null(status);
+
+    if session.is_null() {
+        unsafe {
+            *status = Status::NullPointer;
+        }
+        return std::ptr::null_mut();
+    }
+
+    match unsafe { (&mut *session).read_plaintext() } {
+        Ok(data) => {
+            unsafe {
+                *status = Status::Pass
+            };
+            if data.len() > 0 {
+                let mut boxed_data = Box::new(data);
+                let buffer = Buffer::boxed_raw(boxed_data.as_mut_ptr(), boxed_data.len() as u32);
+                std::mem::forget(boxed_data);
+                return buffer;
+            }
+            Buffer::boxed_raw(std::ptr::null_mut(), 0)
+
+        }
+        Err(_) => {
+            unsafe {
+                *status = Status::Fail;
+            }
+            std::ptr::null_mut()
         }
     }
 }
