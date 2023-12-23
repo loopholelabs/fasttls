@@ -24,9 +24,6 @@ MAN_DIR ?= $(PREFIX)/share/man
 
 all: headers build
 
-run: headers build
-	./main && rm main
-
 headers: $(CLIB_HEADER) $(CLIB_PKG_CONFIG)
 
 .PHONY: build

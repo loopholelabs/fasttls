@@ -244,6 +244,52 @@ pub extern "C" fn fasttls_free_session(session: *mut session::Session) {
 }
 
 #[no_mangle]
+pub extern "C" fn fasttls_is_handshaking(status: *mut Status, session: *mut session::Session) -> bool {
+    Status::check_not_null(status);
+    if session.is_null() {
+        unsafe {
+            *status = Status::NullPointer;
+        }
+        return false;
+    }
+    unsafe {
+        *status = Status::Pass;
+        (&mut *session).is_handshaking()
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn fasttls_wants_read(status: *mut Status, session: *mut session::Session) -> bool {
+    Status::check_not_null(status);
+    if session.is_null() {
+        unsafe {
+            *status = Status::NullPointer;
+        }
+        return false;
+    }
+    unsafe {
+        *status = Status::Pass;
+        (&mut *session).wants_read()
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn fasttls_wants_write(status: *mut Status, session: *mut session::Session) -> bool {
+    Status::check_not_null(status);
+    if session.is_null() {
+        unsafe {
+            *status = Status::NullPointer;
+        }
+        return false;
+    }
+    unsafe {
+        *status = Status::Pass;
+        (&mut *session).wants_write()
+    }
+}
+
+
+#[no_mangle]
 pub extern "C" fn fasttls_handshake(status: *mut Status, session: *mut session::Session, input_data_ptr: *mut u8, input_data_len: u32) -> *mut HandshakeResult {
     Status::check_not_null(status);
 
@@ -529,35 +575,18 @@ pub extern "C" fn fasttls_setup_ktls(status: *mut Status, fd: i32, handshake_sec
 }
 
 #[no_mangle]
-pub extern "C" fn fasttls_send_close_notify(status: *mut Status, fd: i32) {
-    let mut data = vec![];
-    Message::build_alert(AlertLevel::Warning, AlertDescription::CloseNotify)
-        .payload
-        .encode(&mut data);
+pub extern "C" fn fasttls_send_close_notify(status: *mut Status, session: *mut session::Session) {
+    Status::check_not_null(status);
 
-    let mut cmsg = crypto::Cmsg::new(constants::SOL_TLS, constants::TLS_SET_RECORD_TYPE as i32, [constants::TLS_RECORD_ALERT]);
-
-    let msg = libc::msghdr {
-        msg_name: std::ptr::null_mut(),
-        msg_namelen: 0,
-        msg_iov: &mut libc::iovec {
-            iov_base: data.as_mut_ptr() as _,
-            iov_len: data.len(),
-        },
-        msg_iovlen: 1,
-        msg_control: &mut cmsg as *mut _ as *mut _,
-        msg_controllen: cmsg.hdr.cmsg_len,
-        msg_flags: 0,
-    };
-
-    let ret = unsafe { libc::sendmsg(fd, &msg, 0) };
-    if ret < 0 {
+    if session.is_null() {
         unsafe {
-            *status = Status::Fail;
+            *status = Status::NullPointer;
         }
-    } else {
-        unsafe {
-            *status = Status::Pass;
-        }
+        return;
+    }
+
+    unsafe {
+        *status = Status::Pass;
+        (&mut *session).send_close_notify();
     }
 }

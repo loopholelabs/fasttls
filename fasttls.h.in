@@ -24,6 +24,7 @@ extern "C" {
 #endif
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #define FASTTLS_VERSION_MAJOR        @_VERSION_MAJOR@
 #define FASTTLS_VERSION_MINOR        @_VERSION_MINOR@
@@ -89,6 +90,9 @@ fasttls_session_t *fasttls_server_session(fasttls_status_t *status, fasttls_serv
 fasttls_session_t *fasttls_client_session(fasttls_status_t *status, fasttls_client_t *client, int8_t *server_name);
 void fasttls_free_session(fasttls_session_t *session);
 
+bool fasttls_is_handshaking(fasttls_status_t *status, fasttls_session_t *session);
+bool fasttls_wants_read(fasttls_status_t *status, fasttls_session_t *session);
+bool fasttls_wants_write(fasttls_status_t *status, fasttls_session_t *session);
 fasttls_handshake_result_t *fasttls_handshake(fasttls_status_t *status, fasttls_session_t *session, uint8_t *input_data_ptr, uint32_t input_data_len);
 void fasttls_free_handshake(fasttls_handshake_result_t *handshake_result);
 
@@ -103,7 +107,7 @@ void fasttls_free_buffer(fasttls_buffer_t *buffer);
 
 void fasttls_setup_ulp(fasttls_status_t *status, int32_t fd);
 void fasttls_setup_ktls(fasttls_status_t *status, int32_t fd, fasttls_handshake_secrets_t *handshake_secrets);
-void fasttls_send_close_notify(fasttls_status_t *status, int32_t fd);
+void fasttls_send_close_notify(fasttls_status_t *status, fasttls_session_t *session);
 
 #ifdef __cplusplus
 } /* extern "C" */

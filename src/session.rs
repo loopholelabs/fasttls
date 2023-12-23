@@ -172,34 +172,103 @@ impl Session {
         Ok(())
     }
 
+    pub fn is_handshaking(&self) -> bool {
+        self.session.is_handshaking()
+    }
+
+    pub fn wants_read(&self) -> bool {
+        self.session.wants_read()
+    }
+
+    pub fn wants_write(&self) -> bool {
+        self.session.wants_write()
+    }
+
     pub fn handshake(&mut self, input: Option<&[u8]>) -> Result<handshake::Result, Box<dyn Error>> {
         if self.session.is_handshaking() {
             if self.session.wants_read() {
                 match input {
                     None => {
+                        match self.session {
+                            _Session::Server(_) => println!("session is server, is handshaking and wants read with no available data"),
+                            _Session::Client(_) => println!("session is client, is handshaking and wants read with no available data"),
+                        }
                         return Ok(handshake::Result { state: handshake::State::NeedRead, output: None });
                     }
                     Some(input) => {
                         self.read_tls(input)?;
                         if self.session.is_handshaking() && self.session.wants_read() {
+                            match self.session {
+                                _Session::Server(_) => println!("session is server, is handshaking and wants read after consuming input"),
+                                _Session::Client(_) => println!("session is client, is handshaking and wants read after consuming input"),
+                            }
                             return Ok(handshake::Result { state: handshake::State::NeedRead, output: None });
+                        }
+                        match self.session {
+                            _Session::Server(_) => println!("session is server, is handshaking and consumed input but no longer wants read or is not handshaking"),
+                            _Session::Client(_) => println!("session is client, is handshaking and consumed input but no longer wants read or is not handshaking"),
                         }
                     }
                 };
             }
             if self.session.is_handshaking() && self.session.wants_write() {
                 let mut output = vec![];
-                self.write_tls_to_writer(&mut output)?;
+                while self.session.wants_write() {
+                    self.write_tls_to_writer(&mut output)?;
+                }
                 return if self.session.is_handshaking() {
+                    match self.session {
+                        _Session::Server(_) => println!("session is server, is handshaking and wants write after generating output"),
+                        _Session::Client(_) => println!("session is client, is handshaking and wants write after generating output"),
+                    }
                     Ok(handshake::Result { state: handshake::State::NeedWrite, output: Some(output) })
                 } else {
+                    match self.session {
+                        _Session::Server(_) => println!("session is server, is handshaking and is complete after generating output"),
+                        _Session::Client(_) => println!("session is client, is handshaking and is complete after generating output"),
+                    }
                     Ok(handshake::Result { state: handshake::State::Complete, output: Some(output) })
                 }
             }
+            match self.session {
+                _Session::Server(_) => println!("session is server, was handshaking but not anymore"),
+                _Session::Client(_) => println!("session is client, was handshaking but not anymore"),
+            }
+            if self.session.wants_write() {
+                let mut output = vec![];
+                while self.session.wants_write() {
+                    self.write_tls_to_writer(&mut output)?;
+                }
+                match self.session {
+                    _Session::Server(_) => println!("session is server, is handshaking and is complete after generating output"),
+                    _Session::Client(_) => println!("session is client, is handshaking and is complete after generating output"),
+                }
+                Ok(handshake::Result { state: handshake::State::Complete, output: Some(output) })
+            } else {
+                Ok(handshake::Result { state: handshake::State::Complete, output: None})
+            }
         } else if input.is_some() {
             return Err("session is not in handshaking state but input data was available".into());
+        } else {
+            match self.session {
+                _Session::Server(_) => println!("session is server, is not handshaking"),
+                _Session::Client(_) => println!("session is client, is not handshaking"),
+            }
+            if self.session.wants_write() {
+                let mut output = vec![];
+                while self.session.wants_write() {
+                    self.write_tls_to_writer(&mut output)?;
+                }
+                match self.session {
+                    _Session::Server(_) => println!("session is server, is handshaking and is complete after generating output"),
+                    _Session::Client(_) => println!("session is client, is handshaking and is complete after generating output"),
+                }
+                Ok(handshake::Result { state: handshake::State::Complete, output: Some(output) })
+            } else {
+                Ok(handshake::Result { state: handshake::State::Complete, output: None})
+            }
         }
-        Ok(handshake::Result { state: handshake::State::Complete, output: None})
+
     }
 
     pub fn send_close_notify(&mut self) {

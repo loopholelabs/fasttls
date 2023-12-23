@@ -22,9 +22,12 @@ import (
 	"github.com/stretchr/testify/require"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestSession(t *testing.T) {
+	timeout = 50 * time.Millisecond
+
 	testPKI, err := testpki.New()
 	if err != nil {
 		panic(err)
@@ -43,9 +46,7 @@ func TestSession(t *testing.T) {
 	require.NoError(t, err)
 
 	serverSocket, clientSocket, err := pair.New()
-	if err != nil {
-		panic(err)
-	}
+	require.NoError(t, err)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -54,6 +55,31 @@ func TestSession(t *testing.T) {
 		err := clientSession.Handshake(clientSocket)
 		require.NoError(t, err)
 		t.Log("client handshake complete")
+
+		//for i := 0; i < 10; i++ {
+		//	message := []byte(fmt.Sprintf("message #%d", i))
+		//	t.Logf("client sending: %s", message)
+		//	encryptedMessage, err := clientSession.Encrypt(message)
+		//	require.NoError(t, err)
+		//
+		//	_, err = clientSocket.Write(encryptedMessage)
+		//	require.NoError(t, err)
+		//
+		//	buffer := make([]byte, bufferSize)
+		//	n, err := clientSocket.Read(buffer)
+		//	require.NoError(t, err)
+		//
+		//	decryptedMessage, err := clientSession.Decrypt(buffer[:n])
+		//	require.NoError(t, err)
+		//
+		//	t.Logf("client received: %s", string(decryptedMessage))
+		//}
+		//
+		//t.Log("client closing connection")
+		//err = clientSession.SendCloseNotify()
+		//
+		//require.NoError(t, err)
+
 		wg.Done()
 	}()
 
