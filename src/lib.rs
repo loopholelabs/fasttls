@@ -231,8 +231,11 @@ mod tests {
                 let message = match client_session.read_plaintext() {
                     Ok(message) => {
                         if message.len() == 0 {
-                            continue;
-                        }
+                            if client_session.is_closed() {
+                                continue;
+                            } else {
+                                break;
+                            }                        }
                         message
                     },
                     Err(err) => {
@@ -286,7 +289,11 @@ mod tests {
                 let message = match server_session.read_plaintext() {
                     Ok(message) => {
                         if message.len() == 0 {
-                            continue;
+                            if server_session.is_closed() {
+                                continue;
+                            } else {
+                                break;
+                            }
                         }
                         message
                     },

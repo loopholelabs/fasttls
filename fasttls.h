@@ -93,6 +93,7 @@ void fasttls_free_session(fasttls_session_t *session);
 bool fasttls_is_handshaking(fasttls_status_t *status, fasttls_session_t *session);
 bool fasttls_wants_read(fasttls_status_t *status, fasttls_session_t *session);
 bool fasttls_wants_write(fasttls_status_t *status, fasttls_session_t *session);
+bool fasttls_is_closed(fasttls_status_t *status, fasttls_session_t *session);
 fasttls_handshake_result_t *fasttls_handshake(fasttls_status_t *status, fasttls_session_t *session, uint8_t *input_data_ptr, uint32_t input_data_len);
 void fasttls_free_handshake(fasttls_handshake_result_t *handshake_result);
 
@@ -105,9 +106,9 @@ fasttls_buffer_t *fasttls_read_plaintext(fasttls_status_t *status, fasttls_sessi
 fasttls_buffer_t *fasttls_write_tls(fasttls_status_t *status, fasttls_session_t *session);
 void fasttls_free_buffer(fasttls_buffer_t *buffer);
 
+void fasttls_send_close_notify(fasttls_status_t *status, fasttls_session_t *session);
 void fasttls_setup_ulp(fasttls_status_t *status, int32_t fd);
 void fasttls_setup_ktls(fasttls_status_t *status, int32_t fd, fasttls_handshake_secrets_t *handshake_secrets);
-void fasttls_send_close_notify(fasttls_status_t *status, fasttls_session_t *session);
 
 #ifdef __cplusplus
 } /* extern "C" */

@@ -258,6 +258,21 @@ pub extern "C" fn fasttls_is_handshaking(status: *mut Status, session: *mut sess
 }
 
 #[no_mangle]
+pub extern "C" fn fasttls_is_closed(status: *mut Status, session: *mut session::Session) -> bool {
+    Status::check_not_null(status);
+    if session.is_null() {
+        unsafe {
+            *status = Status::NullPointer;
+        }
+        return false;
+    }
+    unsafe {
+        *status = Status::Pass;
+        (&mut *session).is_closed()
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn fasttls_wants_read(status: *mut Status, session: *mut session::Session) -> bool {
     Status::check_not_null(status);
     if session.is_null() {
@@ -286,7 +301,6 @@ pub extern "C" fn fasttls_wants_write(status: *mut Status, session: *mut session
         (&mut *session).wants_write()
     }
 }
-
 
 #[no_mangle]
 pub extern "C" fn fasttls_handshake(status: *mut Status, session: *mut session::Session, input_data_ptr: *mut u8, input_data_len: u32) -> *mut HandshakeResult {
@@ -521,6 +535,20 @@ pub extern "C" fn fasttls_write_tls(status: *mut Status, session: *mut session::
 }
 
 #[no_mangle]
+pub extern "C" fn fasttls_free_buffer(buffer: *mut Buffer) {
+    if !buffer.is_null() {
+        unsafe {
+            if !(*buffer).data_ptr.is_null() && (*buffer).data_len > 0 {
+                let boxed_output = std::slice::from_raw_parts_mut((*buffer).data_ptr, (*buffer).data_len as usize) ;
+                let value = boxed_output.as_mut_ptr();
+                drop(Box::from_raw(value));
+            }
+            drop(Box::from_raw(buffer));
+        }
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn fasttls_send_close_notify(status: *mut Status, session: *mut session::Session) {
     Status::check_not_null(status);
 
@@ -534,35 +562,6 @@ pub extern "C" fn fasttls_send_close_notify(status: *mut Status, session: *mut s
     unsafe {
         *status = Status::Pass;
         (&mut *session).send_close_notify();
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn fasttls_is_closed(status: *mut Status, session: *mut session::Session) -> bool {
-    Status::check_not_null(status);
-    if session.is_null() {
-        unsafe {
-            *status = Status::NullPointer;
-        }
-        return false;
-    }
-    unsafe {
-        *status = Status::Pass;
-        (&mut *session).is_closed()
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn fasttls_free_buffer(buffer: *mut Buffer) {
-    if !buffer.is_null() {
-        unsafe {
-            if !(*buffer).data_ptr.is_null() && (*buffer).data_len > 0 {
-                let boxed_output = std::slice::from_raw_parts_mut((*buffer).data_ptr, (*buffer).data_len as usize) ;
-                let value = boxed_output.as_mut_ptr();
-                drop(Box::from_raw(value));
-            }
-            drop(Box::from_raw(buffer));
-        }
     }
 }
 
