@@ -24,9 +24,7 @@ import (
 
 func TestServer(t *testing.T) {
 	testPKI, err := testpki.New()
-	if err != nil {
-		panic(err)
-	}
+	require.NoError(t, err)
 
 	s, err := NewServer(testPKI.ServerCert, testPKI.ServerKey, testPKI.CaCert)
 	require.NoError(t, err)

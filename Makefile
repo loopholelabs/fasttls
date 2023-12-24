@@ -30,6 +30,24 @@ headers: $(CLIB_HEADER) $(CLIB_PKG_CONFIG)
 build:
 	cargo build --release
 
+.PHONY: test
+test: headers build test_rust test_go
+
+.PHONY: test_verbose
+test_verbose: headers build test_rust_verbose test_go_verbose
+
+test_rust:
+	cargo test
+
+test_rust_verbose:
+	cargo test -- --nocapture
+
+test_go:
+	go test ./...
+
+test_go_verbose:
+	go test ./... -v
+
 .PHONY: $(CLIB_HEADER)
 $(CLIB_HEADER): $(CLIB_HEADER).in
 	cp $(CLIB_HEADER).in $(CLIB_HEADER)
