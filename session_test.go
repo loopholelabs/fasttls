@@ -72,6 +72,10 @@ func TestSession(t *testing.T) {
 
 			decryptedMessage, err := clientSession.Decrypt(buffer[:n])
 			require.NoError(t, err)
+			if len(decryptedMessage) == 0 {
+				i--
+				continue
+			}
 
 			t.Logf("client received: %s", string(decryptedMessage))
 		}
@@ -100,6 +104,11 @@ func TestSession(t *testing.T) {
 
 		decryptedMessage, err := serverSession.Decrypt(buffer[:n])
 		require.NoError(t, err)
+
+		if len(decryptedMessage) == 0 {
+			i--
+			continue
+		}
 
 		t.Logf("server received: %s", string(decryptedMessage))
 		time.Sleep(time.Millisecond)

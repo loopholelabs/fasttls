@@ -191,7 +191,7 @@ mod tests {
             do_client_handshake(&mut client_socket, &mut client_session);
             println!("client handshake complete");
 
-            for i in 0..10 {
+            for i in 0..1000 {
                 let message = format!("message #{}", i);
                 println!("client sending: {}", message);
                 client_session.write_plaintext(message.as_bytes()).unwrap();
@@ -216,42 +216,49 @@ mod tests {
                     }
                 };
 
-                loop {
-                    match client_session.read_tls_from_reader(&mut client_socket) {
-                        Ok(()) => break,
-                        Err(err) => {
-                            if err.to_string().contains("Resource temporarily unavailable") {
-                                continue;
-                            }
-                            panic!("error reading data from client: {}", err);
-                        }
-                    }
-                }
-
-                let message = match client_session.read_plaintext() {
-                    Ok(message) => {
-                        if message.len() == 0 {
-                            if client_session.is_closed() {
-                                continue;
-                            } else {
-                                break;
-                            }                        }
-                        message
-                    },
-                    Err(err) => {
-                        match err.kind() {
-                            ErrorKind::IO => {
-                                if err.message().contains("Resource temporarily unavailable") {
+                let message = loop {
+                    loop {
+                        match client_session.read_tls_from_reader(&mut client_socket) {
+                            Ok(()) => break,
+                            Err(err) => {
+                                if err.to_string().contains("Resource temporarily unavailable") {
                                     continue;
                                 }
-                            },
-                            ErrorKind::Closed => {
-                                break;
-                            },
-                            _ => {}
+                                panic!("error reading data from client: {}", err);
+                            }
                         }
-                        panic!("error reading data from client: {}", err)
                     }
+                    match client_session.read_plaintext() {
+                        Ok(message) => {
+                            if message.len() == 0 {
+                                if client_session.is_closed() {
+                                    println!("client closing connection");
+                                    client_session.send_close_notify();
+                                    _ = client_session.write_tls_to_writer(&mut client_socket);
+                                    _ = client_socket.flush();
+                                    _ = client_socket.shutdown(std::net::Shutdown::Both);
+                                    return;
+                                } else {
+                                    continue;
+                                }
+                            }
+                            break message;
+                        },
+                        Err(err) => {
+                            match err.kind() {
+                                ErrorKind::Closed => {
+                                    println!("client closing connection");
+                                    client_session.send_close_notify();
+                                    _ = client_session.write_tls_to_writer(&mut client_socket);
+                                    _ = client_socket.flush();
+                                    _ = client_socket.shutdown(std::net::Shutdown::Both);
+                                    return;
+                                },
+                                _ => {}
+                            }
+                            panic!("error reading data from client: {}", err)
+                        }
+                    };
                 };
                 println!("client received: {}", std::str::from_utf8(&message).unwrap());
             }
@@ -274,43 +281,50 @@ mod tests {
             do_server_handshake(&mut server_socket, &mut server_session);
             println!("server handshake complete");
 
-            for _i in 0..10 {
-                loop {
-                    match server_session.read_tls_from_reader(&mut server_socket) {
-                        Ok(()) => break,
-                        Err(err) => {
-                            if err.to_string().contains("Resource temporarily unavailable") {
-                                break;
+            for _i in 0..1000 {
+                let message = loop {
+                    loop {
+                        match server_session.read_tls_from_reader(&mut server_socket) {
+                            Ok(()) => break,
+                            Err(err) => {
+                                if err.to_string().contains("Resource temporarily unavailable") {
+                                    break;
+                                }
+                                panic!("error reading data from server: {}", err);
                             }
-                            panic!("error reading data from server: {}", err);
                         }
                     }
-                }
-                let message = match server_session.read_plaintext() {
-                    Ok(message) => {
-                        if message.len() == 0 {
-                            if server_session.is_closed() {
-                                continue;
-                            } else {
-                                break;
-                            }
-                        }
-                        message
-                    },
-                    Err(err) => {
-                        match err.kind() {
-                            ErrorKind::IO => {
-                                if err.message().contains("Resource temporarily unavailable") {
+                    match server_session.read_plaintext() {
+                        Ok(message) => {
+                            if message.len() == 0 {
+                                if server_session.is_closed() {
+                                    println!("server closing connection");
+                                    server_session.send_close_notify();
+                                    _ = server_session.write_tls_to_writer(&mut server_socket);
+                                    _ = server_socket.flush();
+                                    _ = server_socket.shutdown(std::net::Shutdown::Both);
+                                    return;
+                                } else {
                                     continue;
                                 }
-                            },
-                            ErrorKind::Closed => {
-                                break;
-                            },
-                            _ => {}
+                            }
+                            break message;
+                        },
+                        Err(err) => {
+                            match err.kind() {
+                                ErrorKind::Closed => {
+                                    println!("server closing connection");
+                                    server_session.send_close_notify();
+                                    _ = server_session.write_tls_to_writer(&mut server_socket);
+                                    _ = server_socket.flush();
+                                    _ = server_socket.shutdown(std::net::Shutdown::Both);
+                                    return;
+                                },
+                                _ => {}
+                            }
+                            panic!("error reading data from server: {}", err)
                         }
-                        panic!("error reading data from server: {}", err)
-                    }
+                    };
                 };
                 println!("server received: {}", std::str::from_utf8(&message).unwrap());
 

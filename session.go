@@ -22,11 +22,16 @@ package fasttls
 */
 import "C"
 import (
+	"errors"
 	"fmt"
 	"net"
 	"sync/atomic"
 	"time"
 	"unsafe"
+)
+
+var (
+	ErrClosed = errors.New("session is closed")
 )
 
 var (
@@ -164,8 +169,11 @@ func (s *Session) Handshake(connection net.Conn) error {
 }
 
 func (s *Session) WritePlaintext(plaintext []byte) error {
-	// todo: if plaintext is nil for some reason, plaintext[0] will fail
-	C.fasttls_write_plaintext((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session, (*C.uint8_t)(unsafe.Pointer(&plaintext[0])), C.uint32_t(len(plaintext)))
+	if plaintext == nil {
+		C.fasttls_write_plaintext((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session, nil, 0)
+	} else {
+		C.fasttls_write_plaintext((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session, (*C.uint8_t)(unsafe.Pointer(&plaintext[0])), C.uint32_t(len(plaintext)))
+	}
 	if uint8(s.status) != 0 {
 		return fmt.Errorf("failed to write plaintext data: %d", uint8(s.status))
 	}
@@ -197,7 +205,11 @@ func (s *Session) Encrypt(plaintext []byte) ([]byte, error) {
 }
 
 func (s *Session) ReadTLS(encrypted []byte) error {
-	C.fasttls_read_tls((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session, (*C.uint8_t)(unsafe.Pointer(&encrypted[0])), C.uint32_t(len(encrypted)))
+	if encrypted == nil {
+		C.fasttls_read_tls((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session, nil, 0)
+	} else {
+		C.fasttls_read_tls((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session, (*C.uint8_t)(unsafe.Pointer(&encrypted[0])), C.uint32_t(len(encrypted)))
+	}
 	if uint8(s.status) != 0 {
 		return fmt.Errorf("failed to read tls data: %d", uint8(s.status))
 	}
@@ -207,6 +219,13 @@ func (s *Session) ReadTLS(encrypted []byte) error {
 func (s *Session) ReadPlaintext(plaintext []byte) ([]byte, error) {
 	buffer := C.fasttls_read_plaintext((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session)
 	if uint8(s.status) != 0 {
+		closed := C.fasttls_is_closed((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session)
+		if uint8(s.status) != 0 {
+			return nil, fmt.Errorf("failed to read plaintext data: %d", uint8(s.status))
+		}
+		if bool(closed) {
+			return nil, ErrClosed
+		}
 		return nil, fmt.Errorf("failed to read plaintext data: %d", uint8(s.status))
 	}
 	if buffer.data_ptr == nil || buffer.data_len == 0 {
