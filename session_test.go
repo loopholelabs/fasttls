@@ -17,6 +17,7 @@
 package fasttls
 
 import (
+	"fmt"
 	"github.com/loopholelabs/fasttls/internal/testpki"
 	"github.com/loopholelabs/testing/conn/pair"
 	"github.com/stretchr/testify/require"
@@ -56,29 +57,33 @@ func TestSession(t *testing.T) {
 		require.NoError(t, err)
 		t.Log("client handshake complete")
 
-		//for i := 0; i < 10; i++ {
-		//	message := []byte(fmt.Sprintf("message #%d", i))
-		//	t.Logf("client sending: %s", message)
-		//	encryptedMessage, err := clientSession.Encrypt(message)
-		//	require.NoError(t, err)
-		//
-		//	_, err = clientSocket.Write(encryptedMessage)
-		//	require.NoError(t, err)
-		//
-		//	buffer := make([]byte, bufferSize)
-		//	n, err := clientSocket.Read(buffer)
-		//	require.NoError(t, err)
-		//
-		//	decryptedMessage, err := clientSession.Decrypt(buffer[:n])
-		//	require.NoError(t, err)
-		//
-		//	t.Logf("client received: %s", string(decryptedMessage))
-		//}
-		//
-		//t.Log("client closing connection")
-		//err = clientSession.SendCloseNotify()
-		//
-		//require.NoError(t, err)
+		for i := 0; i < 10; i++ {
+			message := []byte(fmt.Sprintf("message #%d", i))
+			t.Logf("client sending: %s", message)
+			encryptedMessage, err := clientSession.Encrypt(message)
+			require.NoError(t, err)
+
+			_, err = clientSocket.Write(encryptedMessage)
+			require.NoError(t, err)
+
+			buffer := make([]byte, bufferSize)
+			n, err := clientSocket.Read(buffer)
+			require.NoError(t, err)
+
+			decryptedMessage, err := clientSession.Decrypt(buffer[:n])
+			require.NoError(t, err)
+
+			t.Logf("client received: %s", string(decryptedMessage))
+		}
+
+		t.Log("client closing connection")
+		err = clientSession.SendCloseNotify()
+		encrypted, err := clientSession.WriteTLS(nil)
+		require.NoError(t, err)
+		_, err = clientSocket.Write(encrypted)
+		require.NoError(t, err)
+		err = clientSocket.Close()
+		require.NoError(t, err)
 
 		wg.Done()
 	}()
@@ -88,65 +93,25 @@ func TestSession(t *testing.T) {
 	require.NoError(t, err)
 	t.Log("server handshake complete")
 
+	for i := 0; i < 10; i++ {
+		buffer := make([]byte, bufferSize)
+		n, err := serverSocket.Read(buffer)
+		require.NoError(t, err)
+
+		decryptedMessage, err := serverSession.Decrypt(buffer[:n])
+		require.NoError(t, err)
+
+		t.Logf("server received: %s", string(decryptedMessage))
+		time.Sleep(time.Millisecond)
+		t.Logf("server sending: %s", string(decryptedMessage))
+		encryptedMessage, err := serverSession.Encrypt(decryptedMessage)
+		require.NoError(t, err)
+
+		_, err = serverSocket.Write(encryptedMessage)
+		require.NoError(t, err)
+	}
+
 	wg.Wait()
-	//
-	//let client_handle = thread::spawn(move || {
-	//	println!("client initiating connection");
-	//	let mut client_socket = TcpStream::connect(listen_address.clone()).unwrap();
-	//	client_socket.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
-	//	client_socket.set_write_timeout(Some(Duration::from_millis(50))).unwrap();
-	//
-	//	println!("client initiating handshake");
-	//	do_client_handshake(&mut client_socket, &mut client_session);
-	//	println!("client handshake complete");
-	//
-	//	for i in 0..10 {
-	//		let message = format!("message #{}", i);
-	//		println!("client sending: {}", message);
-	//		client_session.write_plaintext(message.as_bytes()).unwrap();
-	//
-	//		loop {
-	//			match client_session.write_tls_to_writer(&mut client_socket) {
-	//			Ok(_) => {
-	//			break;
-	//		}
-	//			Err(err) => {
-	//			if err.to_string().contains("Resource temporarily unavailable") {
-	//			continue;
-	//		}
-	//			panic!("error writing data to client: {}", err);
-	//		}
-	//		}
-	//		}
-	//		match client_socket.flush() {
-	//			Ok(_) => {}
-	//			Err(err) => {
-	//				panic!("error flushing bytes to client: {}", err);
-	//			}
-	//		};
-	//
-	//		loop {
-	//			match client_session.read_tls_from_reader(&mut client_socket) {
-	//			Ok(()) => break,
-	//			Err(err) => {
-	//			if err.to_string().contains("Resource temporarily unavailable") {
-	//			continue;
-	//		}
-	//			panic!("error reading data from client: {}", err);
-	//		}
-	//		}
-	//		}
-	//
-	//		let message = client_session.read_plaintext().unwrap();
-	//		println!("client received: {}", std::str::from_utf8(&message).unwrap());
-	//	}
-	//
-	//	println!("client closing connection");
-	//	client_session.send_close_notify();
-	//	_ = client_session.write_tls_to_writer(&mut client_socket);
-	//	_ = client_socket.flush();
-	//	_ = client_socket.shutdown(std::net::Shutdown::Both);
-	//});
 
 	clientSession.Free()
 	serverSession.Free()

@@ -17,8 +17,7 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use std::ffi::CStr;
-use crate::{Client, config, constants, crypto, handshake, Server, session, utils};
-use rustls::{internal::msgs::{enums::AlertLevel, message::Message}, AlertDescription};
+use crate::{Client, config, constants, handshake, Server, session, utils};
 
 #[repr(u8)]
 #[derive(Debug, Clone)]
@@ -522,6 +521,38 @@ pub extern "C" fn fasttls_write_tls(status: *mut Status, session: *mut session::
 }
 
 #[no_mangle]
+pub extern "C" fn fasttls_send_close_notify(status: *mut Status, session: *mut session::Session) {
+    Status::check_not_null(status);
+
+    if session.is_null() {
+        unsafe {
+            *status = Status::NullPointer;
+        }
+        return;
+    }
+
+    unsafe {
+        *status = Status::Pass;
+        (&mut *session).send_close_notify();
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn fasttls_is_closed(status: *mut Status, session: *mut session::Session) -> bool {
+    Status::check_not_null(status);
+    if session.is_null() {
+        unsafe {
+            *status = Status::NullPointer;
+        }
+        return false;
+    }
+    unsafe {
+        *status = Status::Pass;
+        (&mut *session).is_closed()
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn fasttls_free_buffer(buffer: *mut Buffer) {
     if !buffer.is_null() {
         unsafe {
@@ -572,21 +603,4 @@ pub extern "C" fn fasttls_setup_ktls(status: *mut Status, fd: i32, handshake_sec
     }
 
     drop(boxed_handshake_secrets);
-}
-
-#[no_mangle]
-pub extern "C" fn fasttls_send_close_notify(status: *mut Status, session: *mut session::Session) {
-    Status::check_not_null(status);
-
-    if session.is_null() {
-        unsafe {
-            *status = Status::NullPointer;
-        }
-        return;
-    }
-
-    unsafe {
-        *status = Status::Pass;
-        (&mut *session).send_close_notify();
-    }
 }

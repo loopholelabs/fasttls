@@ -15,14 +15,14 @@
 */
 
 use std::io::Cursor;
-use std::error::Error;
 
 use rustls::server::WebPkiClientVerifier;
 use rustls::{ServerConfig, RootCertStore, ClientConfig};
 
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
+use crate::errors::{Error, ErrorKind};
 
-pub fn get_client_config(ca_data: Option<&Vec<u8>>, client_cert: Option<&(Vec<u8>, Vec<u8>)>) -> Result<ClientConfig, Box<dyn Error>> {
+pub fn get_client_config(ca_data: Option<&Vec<u8>>, client_cert: Option<&(Vec<u8>, Vec<u8>)>) -> Result<ClientConfig, Error> {
     let ca_store = match ca_data {
         None => {
             let mut root_store = RootCertStore::empty();
@@ -59,7 +59,7 @@ pub fn get_client_config(ca_data: Option<&Vec<u8>>, client_cert: Option<&(Vec<u8
     Ok(client_config)
 }
 
-pub fn get_server_config(cert_data: &Vec<u8>, key_data: &Vec<u8>, client_auth_root_data: Option<&Vec<u8>>) -> Result<ServerConfig, Box<dyn Error>> {
+pub fn get_server_config(cert_data: &Vec<u8>, key_data: &Vec<u8>, client_auth_root_data: Option<&Vec<u8>>) -> Result<ServerConfig, Error> {
     let client_auth_verifier = match client_auth_root_data {
         None => {
             WebPkiClientVerifier::no_client_auth()
@@ -75,14 +75,14 @@ pub fn get_server_config(cert_data: &Vec<u8>, key_data: &Vec<u8>, client_auth_ro
 
     let mut server_config = ServerConfig::builder()
         .with_client_cert_verifier(client_auth_verifier)
-        .with_single_cert(certs, keys).map_err(|err| -> Box<dyn Error> { format!("failed to build server config: {}", err.to_string()).into() })?;
+        .with_single_cert(certs, keys).map_err(|err| Error::new(ErrorKind::Rustls, format!("failed to build server config: {}", err.to_string())))?;
 
     server_config.enable_secret_extraction = true;
 
     Ok(server_config)
 }
 
-pub(crate) fn load_ca(data: &Vec<u8>) -> Result<RootCertStore, Box<dyn Error>> {
+pub(crate) fn load_ca(data: &Vec<u8>) -> Result<RootCertStore, Error> {
     let mut ca_store = RootCertStore::empty();
     let ca_certs = load_certs(data)?;
     for ca_cert in ca_certs.iter() {
@@ -91,20 +91,20 @@ pub(crate) fn load_ca(data: &Vec<u8>) -> Result<RootCertStore, Box<dyn Error>> {
     Ok(ca_store)
 }
 
-pub(crate) fn load_certs(data: &Vec<u8>) -> Result<Vec<CertificateDer<'static>>, Box<dyn Error>> {
+pub(crate) fn load_certs(data: &Vec<u8>) -> Result<Vec<CertificateDer<'static>>, Error> {
     let mut reader = Cursor::new(data);
     let cert_iterator = rustls_pemfile::certs(&mut reader);
     cert_iterator.map(|cert_result| {
-        cert_result.map_err(|_| "failed to parse certificate".into())
+        cert_result.map_err(|err| Error::new(ErrorKind::IO, format!("failed to parse certificate: {}", err.to_string())))
     }).collect()
 }
 
-pub(crate) fn load_keys(data: &Vec<u8>) -> Result<PrivateKeyDer<'static>, Box<dyn Error>> {
+pub(crate) fn load_keys(data: &Vec<u8>) -> Result<PrivateKeyDer<'static>, Error> {
     let mut reader = Cursor::new(data);
     let key_iterator = rustls_pemfile::private_key(&mut reader);
     key_iterator.map(|key_result| {
         key_result.unwrap()
-    }).map_err(|_| "failed to parse private key".into())
+    }).map_err(|err| Error::new(ErrorKind::IO, format!("failed to parse private key: {}", err.to_string())))
 }
 
 #[cfg(test)]
@@ -114,33 +114,33 @@ mod tests {
 
     #[test]
     fn test_load_ca() {
-        let test_pki = testpki::TestPki::new();
+        let test_pki = testpki::TestPki::new().unwrap();
         let root = load_ca(&test_pki.ca_cert).unwrap();
         assert_eq!(root.len(), 1);
     }
 
     #[test]
     fn test_load_certs() {
-        let test_pki = testpki::TestPki::new();
+        let test_pki = testpki::TestPki::new().unwrap();
         let cert = load_certs(&test_pki.server_cert).unwrap();
         assert_eq!(cert.len(), 1);
     }
 
     #[test]
     fn test_load_keys() {
-        let test_pki = testpki::TestPki::new();
+        let test_pki = testpki::TestPki::new().unwrap();
         load_keys(&test_pki.server_key).unwrap();
     }
 
     #[test]
     fn test_get_server_config() {
-        let test_pki = testpki::TestPki::new();
+        let test_pki = testpki::TestPki::new().unwrap();
         get_server_config(&test_pki.server_cert, &test_pki.server_key, Some(&test_pki.ca_cert)).unwrap();
     }
 
     #[test]
     fn test_get_client_config() {
-        let test_pki = testpki::TestPki::new();
+        let test_pki = testpki::TestPki::new().unwrap();
         get_client_config(Some(&test_pki.ca_cert), Some(&(test_pki.client_cert, test_pki.client_key))).unwrap();
     }
 }

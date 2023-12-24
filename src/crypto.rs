@@ -14,30 +14,10 @@
     limitations under the License.
 */
 
-use std::error::Error;
 use std::mem::size_of;
 use rustls::ConnectionTrafficSecrets;
 use crate::{cipher, constants};
-
-#[cfg_attr(target_pointer_width = "32", repr(C, align(4)))]
-#[cfg_attr(target_pointer_width = "64", repr(C, align(8)))]
-pub(crate) struct Cmsg<const N: usize> {
-    pub(crate) hdr: libc::cmsghdr,
-    data: [u8; N],
-}
-impl<const N: usize> Cmsg<N> {
-    pub(crate) fn new(level: i32, typ: i32, data: [u8; N]) -> Self {
-        Self {
-            hdr: libc::cmsghdr {
-                #[allow(clippy::unnecessary_cast)]
-                cmsg_len: (memoffset::offset_of!(Self, data) + N) as _,
-                cmsg_level: level,
-                cmsg_type: typ,
-            },
-            data,
-        }
-    }
-}
+use crate::errors::{Error, ErrorKind};
 
 #[repr(C)]
 #[derive(Debug, Clone)]
@@ -68,14 +48,14 @@ impl Secret {
     }
 }
 
-pub(crate) fn convert_to_secret(tls_version: u16, seq: u64, secrets: ConnectionTrafficSecrets) -> Result<Secret, Box<dyn Error>> {
+pub(crate) fn convert_to_secret(tls_version: u16, seq: u64, secrets: ConnectionTrafficSecrets) -> Result<Secret, Error> {
     Ok(match secrets {
         ConnectionTrafficSecrets::Aes128Gcm { key, iv } => {
             let mut corrected_iv = [0u8; 8usize];
             for i in 0..8 {
                 corrected_iv[i] = iv.as_ref()[i+4];
             }
-            let salt = (&iv.as_ref()[..4]).try_into().map_err(|_| "invalid iv length for AES128GCM Salt")?;
+            let salt = (&iv.as_ref()[..4]).try_into().map_err(|_| Error::new(ErrorKind::FastTLS, "invalid iv length for AES128GCM Salt".into()))?;
             let mut corrected_key = [0u8; 16usize];
             for i in 0..16 {
                 corrected_key[i] = key.as_ref()[i];
@@ -96,8 +76,8 @@ pub(crate) fn convert_to_secret(tls_version: u16, seq: u64, secrets: ConnectionT
             for i in 0..8 {
                 corrected_iv[i] = iv.as_ref()[i+4];
             }
-            let salt = (&iv.as_ref()[..4]).try_into().map_err(|_| "invalid iv length for AES256GCM Salt")?;
-            let corrected_key = (&key.as_ref()[..32]).try_into().map_err(|_| "invalid key length for AES256GCM Key")?;
+            let salt = (&iv.as_ref()[..4]).try_into().map_err(|_| Error::new(ErrorKind::FastTLS, "invalid iv length for AES256GCM Salt".into()))?;
+            let corrected_key = (&key.as_ref()[..32]).try_into().map_err(|_| Error::new(ErrorKind::FastTLS, "invalid key length for AES256GCM Key".into()))?;
             Secret::AES_GCM_256(cipher::AES_GCM_256 {
                 info: cipher::Info {
                     version: tls_version,
@@ -110,8 +90,8 @@ pub(crate) fn convert_to_secret(tls_version: u16, seq: u64, secrets: ConnectionT
             })
         },
         ConnectionTrafficSecrets::Chacha20Poly1305 { key, iv } => {
-            let corrected_iv = (&iv.as_ref()[..12]).try_into().map_err(|_| "invalid iv length for Chacha20Poly1305 IV")?;
-            let corrected_key = (&key.as_ref()[..32]).try_into().map_err(|_| "invalid key length for Chacha20Poly1305 Key")?;
+            let corrected_iv = (&iv.as_ref()[..12]).try_into().map_err(|_| Error::new(ErrorKind::FastTLS, "invalid iv length for Chacha20Poly1305 IV".into()))?;
+            let corrected_key = (&key.as_ref()[..32]).try_into().map_err(|_| Error::new(ErrorKind::FastTLS, "invalid key length for Chacha20Poly1305 Key".into()))?;
             Secret::Chacha20_Poly1305(cipher::Chacha20_Poly1305 {
                 info: cipher::Info {
                     version: tls_version,
@@ -124,7 +104,7 @@ pub(crate) fn convert_to_secret(tls_version: u16, seq: u64, secrets: ConnectionT
             })
         },
         _ => {
-            return Err("unsupported cipher suite".into());
+            return Err(Error::new(ErrorKind::FastTLS, "unsupported cipher suite".into()));
         }
     })
 }

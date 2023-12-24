@@ -1,10 +1,10 @@
-use std::error::Error;
 use std::io;
 use std::io::{Cursor, Read, Write};
 use std::sync::Arc;
 use rustls::{ClientConfig, ClientConnection, IoState, ServerConfig, ServerConnection, SupportedCipherSuite};
 use rustls_pki_types::InvalidDnsNameError;
 use crate::{constants, crypto, handshake};
+use crate::errors::{Error, ErrorKind};
 
 enum _Session {
     Server(ServerConnection),
@@ -93,47 +93,49 @@ impl _Session {
 pub struct Session {
     session: _Session,
     plaintext_bytes: usize,
+    closed: bool,
 }
 impl Session {
-    pub fn new_client(config: Arc<ClientConfig>, server_name: &'static str) -> Result<Self, Box<dyn Error>> {
-        let mut client_connection = ClientConnection::new(config, server_name.try_into().map_err(|err: InvalidDnsNameError| -> Box<dyn Error> { format!("failed to convert server name: {}", err.to_string()).into() })?)
-            .map_err(|err| -> Box<dyn Error> {
-                format!("failed to create client session: {}", err.to_string()).into()
-            })?;
+    pub fn new_client(config: Arc<ClientConfig>, server_name: &'static str) -> Result<Self, Error> {
+        let server_name = server_name.try_into().map_err(|err: InvalidDnsNameError| Error::new(ErrorKind::Rustls, format!("failed to convert server name: {}", err.to_string())))?;
+        let mut client_connection = ClientConnection::new(config, server_name).map_err(|err| Error::new(ErrorKind::Rustls, format!("failed to create client session: {}", err.to_string())))?;
         client_connection.set_buffer_limit(None);
         Ok(Session {
             session: _Session::Client(client_connection),
-            plaintext_bytes: 0
+            plaintext_bytes: 0,
+            closed: false,
         })
     }
 
-    pub fn new_server(config: Arc<ServerConfig>) -> Result<Self, Box<dyn Error>> {
-        let mut server_connection = ServerConnection::new(config)
-            .map_err(|err| -> Box<dyn Error> {
-                format!("failed to create server session: {}", err.to_string()).into()
-            })?;
+    pub fn new_server(config: Arc<ServerConfig>) -> Result<Self, Error> {
+        let mut server_connection = ServerConnection::new(config).map_err(|err| Error::new(ErrorKind::Rustls, format!("failed to create server session: {}", err.to_string())))?;
         server_connection.set_buffer_limit(None);
         Ok(Session {
             session: _Session::Server(server_connection),
-            plaintext_bytes: 0
+            plaintext_bytes: 0,
+            closed: false,
         })
     }
 
     // read_tls_from_reader reads TLS bytes from the given reader into the session object
-    pub fn read_tls_from_reader(&mut self, reader: &mut dyn Read) -> Result<(), Box<dyn Error>> {
-        self.session.read_tls(reader).map_err(|err| -> Box<dyn Error> { format!("failed to read encrypted data: {}", err.to_string()).into() })?;
-        let session_state = self.session.process_new_packets().map_err(|err| -> Box<dyn Error> { format!("failed to process new packets: {}", err.to_string()).into() })?;
+    pub fn read_tls_from_reader(&mut self, reader: &mut dyn Read) -> Result<(), Error> {
+        self.session.read_tls(reader).map_err(|err| Error::new(ErrorKind::IO, format!("failed to read encrypted data: {}", err.to_string())))?;
+        let session_state = self.session.process_new_packets().map_err(|err| Error::new(ErrorKind::IO, format!("failed to process new packets: {}", err.to_string())))?;
         self.plaintext_bytes = session_state.plaintext_bytes_to_read();
+        self.closed = session_state.peer_has_closed();
         Ok(())
     }
 
     // read_tls reads TLS bytes into the session object
-    pub fn read_tls(&mut self, data: &[u8]) -> Result<(), Box<dyn Error>> {
+    pub fn read_tls(&mut self, data: &[u8]) -> Result<(), Error> {
         self.read_tls_from_reader(&mut Cursor::new(data))
     }
 
     // read_plaintext reads TLS bytes from the session and returns a vector of bytes
-    pub fn read_plaintext(&mut self) -> Result<Box<[u8]>, Box<dyn Error>> {
+    pub fn read_plaintext(&mut self) -> Result<Box<[u8]>, Error> {
+        if self.plaintext_bytes == 0 && self.closed {
+            return Err(Error::new(ErrorKind::Closed, "peer has closed the connection".into()));
+        }
         let mut reader = self.session.reader();
         let mut plaintext_bytes = Vec::with_capacity(self.plaintext_bytes);
         unsafe { plaintext_bytes.set_len(self.plaintext_bytes) };
@@ -142,8 +144,8 @@ impl Session {
                 self.plaintext_bytes = 0;
             }
             Err(err) => {
-                if err.kind() != std::io::ErrorKind::WouldBlock {
-                    return Err(format!("failed to read plaintext data: {}", err.to_string()).into());
+                if err.kind() != io::ErrorKind::WouldBlock {
+                    return Err(Error::new(ErrorKind::FastTLS, format!("failed to read plaintext data: {}", err.to_string())));
                 }
             }
         }
@@ -151,24 +153,24 @@ impl Session {
     }
 
     // write_tls_to_writer writes TLS bytes from the given writer into the session object
-    pub fn write_tls_to_writer(&mut self, writer: &mut dyn Write) -> Result<(), Box<dyn Error>> {
+    pub fn write_tls_to_writer(&mut self, writer: &mut dyn Write) -> Result<(), Error> {
         while self.session.wants_write() {
-            self.session.write_tls(writer).map_err(|err| -> Box<dyn Error> { format!("failed to write encrypted data: {}", err.to_string()).into() })?;
+            self.session.write_tls(writer).map_err(|err| Error::new(ErrorKind::IO, format!("failed to write encrypted data: {}", err.to_string())))?;
         }
         Ok(())
     }
 
     // write_tls returns TLS bytes from the session object
-    pub fn write_tls(&mut self) -> Result<Box<[u8]>, Box<dyn Error>> {
+    pub fn write_tls(&mut self) -> Result<Box<[u8]>, Error> {
         let mut buffer = Vec::new();
         self.write_tls_to_writer(&mut buffer)?;
         Ok(buffer.into_boxed_slice())
     }
 
     // write_plaintext writes plaintext bytes into the session object
-    pub fn write_plaintext(&mut self, data: &[u8]) -> Result<(), Box<dyn Error>> {
+    pub fn write_plaintext(&mut self, data: &[u8]) -> Result<(), Error> {
         let mut writer = self.session.writer();
-        writer.write(data).map_err(|err| -> Box<dyn Error> { format!("failed to write plaintext data: {}", err.to_string()).into() })?;
+        writer.write(data).map_err(|err| Error::new(ErrorKind::IO, format!("failed to write plaintext data: {}", err.to_string())))?;
         Ok(())
     }
 
@@ -184,7 +186,7 @@ impl Session {
         self.session.wants_write()
     }
 
-    pub fn handshake(&mut self, input: Option<&[u8]>) -> Result<handshake::Result, Box<dyn Error>> {
+    pub fn handshake(&mut self, input: Option<&[u8]>) -> Result<handshake::Result, Error> {
         if self.session.is_handshaking() {
             if self.session.wants_read() {
                 match input {
@@ -193,6 +195,9 @@ impl Session {
                     }
                     Some(input) => {
                         self.read_tls(input)?;
+                        if self.closed {
+                            return Err(Error::new(ErrorKind::Handshake, "peer has closed the connection".into()));
+                        }
                         if self.session.is_handshaking() && self.session.wants_read() {
                             return Ok(handshake::Result { state: handshake::State::NeedRead, output: None });
                         }
@@ -204,21 +209,23 @@ impl Session {
                 while self.session.wants_write() {
                     self.write_tls_to_writer(&mut output)?;
                 }
+                let output = if output.len() > 0 { Some(output) } else { None };
                 return if self.session.is_handshaking() {
-                    Ok(handshake::Result { state: handshake::State::NeedWrite, output: Some(output) })
+                    Ok(handshake::Result { state: handshake::State::NeedWrite, output })
                 } else {
-                    Ok(handshake::Result { state: handshake::State::Complete, output: Some(output) })
+                    Ok(handshake::Result { state: handshake::State::Complete, output })
                 }
             }
         } else if input.is_some() {
-            return Err("session is not in handshaking state but input data was available".into());
+            return Err(Error::new(ErrorKind::Handshake, "session is not in handshaking state but input data was available".into()));
         }
         if self.session.wants_write() {
             let mut output = vec![];
             while self.session.wants_write() {
                 self.write_tls_to_writer(&mut output)?;
             }
-            return Ok(handshake::Result { state: handshake::State::Complete, output: Some(output) });
+            let output = if output.len() > 0 { Some(output) } else { None };
+            return Ok(handshake::Result { state: handshake::State::Complete, output });
         }
         Ok(handshake::Result { state: handshake::State::Complete, output: None})
     }
@@ -227,14 +234,18 @@ impl Session {
         self.session.send_close_notify();
     }
 
-    pub fn secrets(self) -> Result<handshake::Secrets, Box<dyn Error>> {
-        let cipher_suite = self.session.negotiated_cipher_suite().ok_or("failed to get cipher suite")?;
+    pub fn is_closed(&self) -> bool {
+        self.closed
+    }
+
+    pub fn secrets(self) -> Result<handshake::Secrets, Error> {
+        let cipher_suite = self.session.negotiated_cipher_suite().ok_or(Error::new(ErrorKind::FastTLS, "failed to get cipher suite".into()))?;
         let tls_version = match cipher_suite {
             SupportedCipherSuite::Tls12(..) => constants::TLS_1_2_VERSION_NUMBER,
             SupportedCipherSuite::Tls13(..) => constants::TLS_1_3_VERSION_NUMBER,
         };
 
-        let secrets = self.session.dangerous_extract_secrets().map_err(|err| -> Box<dyn Error> { format!("failed to extract secrets: {}", err.to_string()).into() })?;
+        let secrets = self.session.dangerous_extract_secrets().map_err(|err| Error::new(ErrorKind::Rustls, format!("failed to extract secrets: {}", err.to_string())))?;
 
         let (rx_seq, rx_secrets) = secrets.rx;
         let rx_crypto_secret = crypto::convert_to_secret(tls_version, rx_seq, rx_secrets)?;

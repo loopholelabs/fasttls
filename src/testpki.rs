@@ -14,6 +14,8 @@
     limitations under the License.
 */
 
+use crate::errors::Error;
+
 #[derive(Debug, Clone)]
 pub struct TestPki {
     pub ca_cert: Vec<u8>,
@@ -25,7 +27,7 @@ pub struct TestPki {
 
 impl TestPki {
     #[allow(dead_code)]
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new() -> Result<Self, Error> {
         let alg = &rcgen::PKCS_ECDSA_P256_SHA256;
         let mut ca_params = rcgen::CertificateParams::new(Vec::new());
         ca_params
@@ -41,13 +43,13 @@ impl TestPki {
             rcgen::KeyUsagePurpose::CrlSign,
         ];
         ca_params.alg = alg;
-        let ca_cert = rcgen::Certificate::from_params(ca_params).unwrap();
+        let ca_cert = rcgen::Certificate::from_params(ca_params)?;
 
         let mut server_params = rcgen::CertificateParams::new(vec!["localhost".to_string()]);
         server_params.is_ca = rcgen::IsCa::NoCa;
         server_params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ServerAuth];
         server_params.alg = alg;
-        let server_cert = rcgen::Certificate::from_params(server_params).unwrap();
+        let server_cert = rcgen::Certificate::from_params(server_params)?;
 
         let mut client_params = rcgen::CertificateParams::new(Vec::new());
         client_params
@@ -57,15 +59,15 @@ impl TestPki {
         client_params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ClientAuth];
         client_params.alg = alg;
         client_params.serial_number = Some(rcgen::SerialNumber::from(vec![0xC0, 0xFF, 0xEE]));
-        let client_cert = rcgen::Certificate::from_params(client_params).unwrap();
+        let client_cert = rcgen::Certificate::from_params(client_params)?;
 
-        Self {
-            ca_cert: Vec::from(ca_cert.serialize_pem().unwrap().as_bytes()),
-            client_cert: Vec::from(client_cert.serialize_pem_with_signer(&ca_cert).unwrap().as_bytes()),
+        Ok(Self {
+            ca_cert: Vec::from(ca_cert.serialize_pem()?.as_bytes()),
+            client_cert: Vec::from(client_cert.serialize_pem_with_signer(&ca_cert)?.as_bytes()),
             client_key: Vec::from(client_cert.serialize_private_key_pem().as_bytes()),
-            server_cert: Vec::from(server_cert.serialize_pem_with_signer(&ca_cert).unwrap().as_bytes()),
+            server_cert: Vec::from(server_cert.serialize_pem_with_signer(&ca_cert)?.as_bytes()),
             server_key: Vec::from(server_cert.serialize_private_key_pem().as_bytes())
-        }
+        })
     }
 }
 
@@ -80,7 +82,7 @@ mod tests {
 
     #[test]
     fn test_server_cert() {
-        let test_pki = TestPki::new();
+        let test_pki = TestPki::new().unwrap();
         let root = config::load_ca(&test_pki.ca_cert).unwrap();
         assert_eq!(root.len(), 1);
 
@@ -94,7 +96,7 @@ mod tests {
 
     #[test]
     fn test_client_cert() {
-        let test_pki = TestPki::new();
+        let test_pki = TestPki::new().unwrap();
         let root = config::load_ca(&test_pki.ca_cert).unwrap();
         assert_eq!(root.len(), 1);
 

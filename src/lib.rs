@@ -23,11 +23,12 @@ mod handshake;
 mod utils;
 mod cipher;
 mod session;
+mod errors;
 
-use std::error::Error;
 use std::sync::Arc;
 
 use rustls::{ClientConfig, ServerConfig};
+use errors::Error;
 
 pub struct Server {
     pub config: Arc<ServerConfig>,
@@ -39,7 +40,7 @@ impl Server {
         }
     }
 
-    pub fn session(&self) -> Result<session::Session, Box<dyn Error>> {
+    pub fn session(&self) -> Result<session::Session, Error> {
         let server_session = session::Session::new_server(self.config.clone())?;
         Ok(server_session)
     }
@@ -55,7 +56,7 @@ impl Client {
         }
     }
 
-    pub fn session(&self, server_name: &'static str) -> Result<session::Session, Box<dyn Error>> {
+    pub fn session(&self, server_name: &'static str) -> Result<session::Session, Error> {
         let client_session = session::Session::new_client(self.config.clone(), server_name)?;
         Ok(client_session)
     }
@@ -69,8 +70,9 @@ mod tests {
     use std::thread;
     use std::io::{Read, Write};
     use std::time::Duration;
+    use crate::errors::ErrorKind;
 
-    fn read_from_reader(reader: &mut dyn Read) -> Result<Vec<u8>, Box<dyn Error>> {
+    fn read_from_reader(reader: &mut dyn Read) -> Result<Vec<u8>, Error> {
         let mut receive_data = vec![];
         loop {
             let mut buffer = [0; 1024];
@@ -92,7 +94,7 @@ mod tests {
         Ok(receive_data)
     }
 
-    fn write_to_writer(writer: &mut dyn Write, send_data: &[u8]) -> Result<(), Box<dyn Error>> {
+    fn write_to_writer(writer: &mut dyn Write, send_data: &[u8]) -> Result<(), Error> {
         loop {
             match writer.write(send_data) {
                 Ok(_) => {
@@ -168,7 +170,7 @@ mod tests {
 
     #[test]
     fn test_do_handshake() {
-        let test_pki = testpki::TestPki::new();
+        let test_pki = testpki::TestPki::new().unwrap();
 
         let client_config = config::get_client_config(Some(&test_pki.ca_cert), Some(&(test_pki.client_cert, test_pki.client_key))).unwrap();
         let server_config = config::get_server_config(&test_pki.server_cert, &test_pki.server_key, Some(&test_pki.ca_cert)).unwrap();
@@ -226,7 +228,28 @@ mod tests {
                     }
                 }
 
-                let message = client_session.read_plaintext().unwrap();
+                let message = match client_session.read_plaintext() {
+                    Ok(message) => {
+                        if message.len() == 0 {
+                            continue;
+                        }
+                        message
+                    },
+                    Err(err) => {
+                        match err.kind() {
+                            ErrorKind::IO => {
+                                if err.message().contains("Resource temporarily unavailable") {
+                                    continue;
+                                }
+                            },
+                            ErrorKind::Closed => {
+                                break;
+                            },
+                            _ => {}
+                        }
+                        panic!("error reading data from client: {}", err)
+                    }
+                };
                 println!("client received: {}", std::str::from_utf8(&message).unwrap());
             }
 
@@ -260,7 +283,28 @@ mod tests {
                         }
                     }
                 }
-                let message = server_session.read_plaintext().unwrap();
+                let message = match server_session.read_plaintext() {
+                    Ok(message) => {
+                        if message.len() == 0 {
+                            continue;
+                        }
+                        message
+                    },
+                    Err(err) => {
+                        match err.kind() {
+                            ErrorKind::IO => {
+                                if err.message().contains("Resource temporarily unavailable") {
+                                    continue;
+                                }
+                            },
+                            ErrorKind::Closed => {
+                                break;
+                            },
+                            _ => {}
+                        }
+                        panic!("error reading data from server: {}", err)
+                    }
+                };
                 println!("server received: {}", std::str::from_utf8(&message).unwrap());
 
                 server_session.write_plaintext(&message).unwrap();

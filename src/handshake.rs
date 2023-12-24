@@ -5,7 +5,7 @@ use crate::crypto;
 pub enum State {
     Complete,
     NeedRead,
-    NeedWrite,
+    NeedWrite
 }
 
 #[derive(Debug, Clone)]
