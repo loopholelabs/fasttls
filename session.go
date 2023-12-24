@@ -26,7 +26,6 @@ import (
 	"fmt"
 	"net"
 	"sync/atomic"
-	"time"
 	"unsafe"
 )
 
@@ -36,7 +35,6 @@ var (
 
 var (
 	bufferSize = 1024
-	timeout    = 10 * time.Second
 )
 
 type kind uint8
@@ -76,12 +74,7 @@ HANDSHAKE:
 		case C.FASTTLS_HANDSHAKE_STATE_NEED_WRITE, C.FASTTLS_HANDSHAKE_STATE_COMPLETE:
 			if handshake.output_data_ptr != nil && handshake.output_data_len > 0 {
 				output := unsafe.Slice((*byte)(unsafe.Pointer(handshake.output_data_ptr)), int(handshake.output_data_len))
-				err := connection.SetWriteDeadline(time.Now().Add(timeout))
-				if err != nil {
-					C.fasttls_free_handshake(handshake)
-					return fmt.Errorf("failed to set client handshake write deadline: %w", err)
-				}
-				_, err = connection.Write(output)
+				_, err := connection.Write(output)
 				if err != nil {
 					C.fasttls_free_handshake(handshake)
 					return fmt.Errorf("failed to write client handshake data: %w", err)
@@ -96,10 +89,6 @@ HANDSHAKE:
 			return fmt.Errorf("unknown client handshake state: %d", uint8(handshake.state))
 		}
 		C.fasttls_free_handshake(handshake)
-		err := connection.SetReadDeadline(time.Now().Add(timeout))
-		if err != nil {
-			return fmt.Errorf("failed to set client handshake read deadline: %w", err)
-		}
 		encryptedBytes, err := connection.Read(encryptedData)
 		if err != nil {
 			return fmt.Errorf("failed to read client handshake data: %w", err)
@@ -116,10 +105,6 @@ func (s *Session) serverHandshake(connection net.Conn) error {
 	encryptedData := make([]byte, bufferSize)
 HANDSHAKE:
 	for {
-		err := connection.SetReadDeadline(time.Now().Add(timeout))
-		if err != nil {
-			return fmt.Errorf("failed to set server handshake read deadline: %w", err)
-		}
 		encryptedBytes, err := connection.Read(encryptedData)
 		if err != nil {
 			return fmt.Errorf("failed to read server handshake data: %w", err)
@@ -133,11 +118,6 @@ HANDSHAKE:
 		case C.FASTTLS_HANDSHAKE_STATE_NEED_WRITE, C.FASTTLS_HANDSHAKE_STATE_COMPLETE:
 			if handshake.output_data_ptr != nil && handshake.output_data_len > 0 {
 				output := unsafe.Slice((*byte)(unsafe.Pointer(handshake.output_data_ptr)), int(handshake.output_data_len))
-				err := connection.SetWriteDeadline(time.Now().Add(timeout))
-				if err != nil {
-					C.fasttls_free_handshake(handshake)
-					return fmt.Errorf("failed to set server handshake write deadline: %w", err)
-				}
 				_, err = connection.Write(output)
 				if err != nil {
 					C.fasttls_free_handshake(handshake)

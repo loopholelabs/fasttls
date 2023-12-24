@@ -23,12 +23,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"sync"
 	"testing"
-	"time"
 )
 
 func TestSession(t *testing.T) {
-	timeout = 50 * time.Millisecond
-
 	testPKI, err := testpki.New()
 	if err != nil {
 		panic(err)
@@ -49,6 +46,9 @@ func TestSession(t *testing.T) {
 	serverSocket, clientSocket, err := pair.New()
 	require.NoError(t, err)
 
+	clientLastMessage := "no message"
+	serverLastMessage := "no message"
+
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -57,7 +57,7 @@ func TestSession(t *testing.T) {
 		require.NoError(t, err)
 		t.Log("client handshake complete")
 
-		for i := 0; i < 10; i++ {
+		for i := 0; i < 1000; i++ {
 			message := []byte(fmt.Sprintf("message #%d", i))
 			t.Logf("client sending: %s", message)
 			encryptedMessage, err := clientSession.Encrypt(message)
@@ -77,7 +77,8 @@ func TestSession(t *testing.T) {
 				continue
 			}
 
-			t.Logf("client received: %s", string(decryptedMessage))
+			clientLastMessage = string(decryptedMessage)
+			t.Logf("client received: %s", clientLastMessage)
 		}
 
 		t.Log("client closing connection")
@@ -97,7 +98,7 @@ func TestSession(t *testing.T) {
 	require.NoError(t, err)
 	t.Log("server handshake complete")
 
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 1000; i++ {
 		buffer := make([]byte, bufferSize)
 		n, err := serverSocket.Read(buffer)
 		require.NoError(t, err)
@@ -110,9 +111,8 @@ func TestSession(t *testing.T) {
 			continue
 		}
 
-		t.Logf("server received: %s", string(decryptedMessage))
-		time.Sleep(time.Millisecond)
-		t.Logf("server sending: %s", string(decryptedMessage))
+		serverLastMessage = string(decryptedMessage)
+		t.Logf("server received: %s", serverLastMessage)
 		encryptedMessage, err := serverSession.Encrypt(decryptedMessage)
 		require.NoError(t, err)
 
@@ -121,6 +121,8 @@ func TestSession(t *testing.T) {
 	}
 
 	wg.Wait()
+
+	require.Equal(t, clientLastMessage, serverLastMessage)
 
 	clientSession.Free()
 	serverSession.Free()
