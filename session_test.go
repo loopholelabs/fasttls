@@ -44,8 +44,8 @@ func TestSession(t *testing.T) {
 	serverSocket, clientSocket, err := pair.New()
 	require.NoError(t, err)
 
-	clientLastMessage := "no message"
-	serverLastMessage := "no message"
+	clientLastMessage := "no client message"
+	serverLastMessage := "no server message"
 
 	var wg sync.WaitGroup
 	wg.Add(1)

@@ -24,7 +24,7 @@ import "C"
 import (
 	"errors"
 	"fmt"
-	"net"
+	"io"
 	"sync/atomic"
 	"unsafe"
 )
@@ -44,11 +44,18 @@ const (
 	kindClient
 )
 
+const (
+	handshakeStateNotComplete = iota
+	handshakeStateInProgress
+	handshakeStateComplete
+)
+
 type Session struct {
-	free    atomic.Bool
-	kind    kind
-	status  C.fasttls_status_t
-	session *C.fasttls_session_t
+	free           atomic.Bool
+	handshakeState atomic.Uint32
+	kind           kind
+	status         C.fasttls_status_t
+	session        *C.fasttls_session_t
 }
 
 func newSession(session *C.fasttls_session_t, kind kind) (*Session, error) {
@@ -61,7 +68,7 @@ func newSession(session *C.fasttls_session_t, kind kind) (*Session, error) {
 	}, nil
 }
 
-func (s *Session) clientHandshake(connection net.Conn) error {
+func (s *Session) clientHandshake(connection io.ReadWriter) error {
 	handshake := C.fasttls_handshake((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session, nil, 0)
 	if uint8(s.status) != 0 {
 		return fmt.Errorf("failed to initiate client handshake: %d", uint8(s.status))
@@ -98,10 +105,11 @@ HANDSHAKE:
 			return fmt.Errorf("failed to complete client handshake: %d", uint8(s.status))
 		}
 	}
+	s.handshakeState.Store(handshakeStateComplete)
 	return nil
 }
 
-func (s *Session) serverHandshake(connection net.Conn) error {
+func (s *Session) serverHandshake(connection io.ReadWriter) error {
 	encryptedData := make([]byte, bufferSize)
 HANDSHAKE:
 	for {
@@ -134,18 +142,27 @@ HANDSHAKE:
 		}
 		C.fasttls_free_handshake(handshake)
 	}
+	s.handshakeState.Store(handshakeStateComplete)
 	return nil
 }
 
-func (s *Session) Handshake(connection net.Conn) error {
-	switch s.kind {
-	case kindClient:
-		return s.clientHandshake(connection)
-	case kindServer:
-		return s.serverHandshake(connection)
-	default:
-		return fmt.Errorf("unknown session kind: %d", s.kind)
+func (s *Session) Handshake(connection io.ReadWriter) error {
+	if s.handshakeState.CompareAndSwap(handshakeStateNotComplete, handshakeStateInProgress) {
+		switch s.kind {
+		case kindClient:
+			return s.clientHandshake(connection)
+		case kindServer:
+			return s.serverHandshake(connection)
+		default:
+			return fmt.Errorf("unknown session kind: %d", s.kind)
+		}
 	}
+
+	if s.handshakeState.Load() == handshakeStateInProgress {
+		return fmt.Errorf("handshake already in progress")
+	}
+
+	return nil
 }
 
 func (s *Session) WritePlaintext(plaintext []byte) error {
