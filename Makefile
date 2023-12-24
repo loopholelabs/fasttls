@@ -6,6 +6,8 @@ VERSION_MICRO=$(shell echo $(VERSION) | cut -c6)
 CLIB_HEADER=fasttls.h
 CLIB_PKG_CONFIG=fasttls.pc
 PREFIX ?= /usr/local
+CC='gcc'
+CXX='g++'
 
 OS_NAME := $(shell uname -s | tr A-Z a-z)
 
@@ -22,16 +24,29 @@ MAN_DIR ?= $(PREFIX)/share/man
 
 all: headers build
 
-run: headers build
-	./main && rm main
-
 headers: $(CLIB_HEADER) $(CLIB_PKG_CONFIG)
 
 .PHONY: build
 build:
 	cargo build --release
-	rm -rf ./main
-	CC='gcc' CXX='g++' go build main.go
+
+.PHONY: test
+test: headers build test_rust test_go
+
+.PHONY: test_verbose
+test_verbose: headers build test_rust_verbose test_go_verbose
+
+test_rust:
+	cargo test
+
+test_rust_verbose:
+	cargo test -- --nocapture
+
+test_go:
+	go test ./...
+
+test_go_verbose:
+	go test ./... -v
 
 .PHONY: $(CLIB_HEADER)
 $(CLIB_HEADER): $(CLIB_HEADER).in

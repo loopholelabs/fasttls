@@ -24,6 +24,7 @@ extern "C" {
 #endif
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #define FASTTLS_VERSION_MAJOR        0
 #define FASTTLS_VERSION_MINOR        1
@@ -60,9 +61,11 @@ extern "C" {
 DEFINE_ENUM(fasttls_status, STATUS_VALUES)
 DEFINE_ENUM(fasttls_handshake_state, HANDSHAKE_STATE_VALUES)
 
-typedef struct fasttls_server_config fasttls_server_config_t;
+typedef struct fasttls_server fasttls_server_t;
 
-typedef struct fasttls_server_session fasttls_server_session_t;
+typedef struct fasttls_client fasttls_client_t;
+
+typedef struct fasttls_session fasttls_session_t;
 
 typedef struct fasttls_handshake_result {
     fasttls_handshake_state_t state;
@@ -77,21 +80,33 @@ typedef struct fasttls_buffer {
     uint32_t data_len;
 } fasttls_buffer_t;
 
-fasttls_server_config_t *fasttls_server_config(fasttls_status_t *status, uint8_t *cert_data_ptr, uint32_t cert_data_len, uint8_t *key_data_ptr, uint32_t key_data_len, uint8_t *client_auth_ca_data_ptr, uint32_t client_auth_ca_data_len);
-void fasttls_free_server_config(fasttls_server_config_t *server_config);
+fasttls_server_t *fasttls_server(fasttls_status_t *status, uint8_t *cert_data_ptr, uint32_t cert_data_len, uint8_t *key_data_ptr, uint32_t key_data_len, uint8_t *client_auth_ca_data_ptr, uint32_t client_auth_ca_data_len);
+void fasttls_free_server(fasttls_server_t *server);
 
-fasttls_server_session_t *fasttls_server_session(fasttls_status_t *status, fasttls_server_config_t *server_config);
-void fasttls_free_server_session(fasttls_server_session_t *server_session);
+fasttls_client_t *fasttls_client(fasttls_status_t *status, uint8_t *ca_data_ptr, uint32_t ca_data_len, uint8_t *client_auth_cert_data_ptr, uint32_t client_auth_cert_data_len, uint8_t *client_auth_key_data_ptr, uint32_t client_auth_key_data_len);
+void fasttls_free_client(fasttls_client_t *client);
 
-fasttls_handshake_result_t *fasttls_server_handshake(fasttls_status_t *status, fasttls_server_session_t *server_session, uint8_t *input_data_ptr, uint32_t input_data_len);
+fasttls_session_t *fasttls_server_session(fasttls_status_t *status, fasttls_server_t *server);
+fasttls_session_t *fasttls_client_session(fasttls_status_t *status, fasttls_client_t *client, int8_t *server_name);
+void fasttls_free_session(fasttls_session_t *session);
+
+bool fasttls_is_handshaking(fasttls_status_t *status, fasttls_session_t *session);
+bool fasttls_wants_read(fasttls_status_t *status, fasttls_session_t *session);
+bool fasttls_wants_write(fasttls_status_t *status, fasttls_session_t *session);
+bool fasttls_is_closed(fasttls_status_t *status, fasttls_session_t *session);
+fasttls_handshake_result_t *fasttls_handshake(fasttls_status_t *status, fasttls_session_t *session, uint8_t *input_data_ptr, uint32_t input_data_len);
 void fasttls_free_handshake(fasttls_handshake_result_t *handshake_result);
 
-fasttls_handshake_secrets_t *fasttls_server_handshake_secrets(fasttls_status_t *status, fasttls_server_session_t *server_session);
-void fasttls_free_handshake_secrets(fasttls_handshake_secrets_t *handshake_secrets);
+fasttls_handshake_secrets_t *fasttls_secrets(fasttls_status_t *status, fasttls_session_t *session);
+void fasttls_free_secrets(fasttls_handshake_secrets_t *secrets);
 
-fasttls_buffer_t *fasttls_server_overflow(fasttls_status_t *status, fasttls_server_session_t *server_session);
+void fasttls_read_tls(fasttls_status_t *status, fasttls_session_t *session, uint8_t *data_ptr, uint32_t data_len);
+void fasttls_write_plaintext(fasttls_status_t *status, fasttls_session_t *session, uint8_t *data_ptr, uint32_t data_len);
+fasttls_buffer_t *fasttls_read_plaintext(fasttls_status_t *status, fasttls_session_t *session);
+fasttls_buffer_t *fasttls_write_tls(fasttls_status_t *status, fasttls_session_t *session);
 void fasttls_free_buffer(fasttls_buffer_t *buffer);
 
+void fasttls_send_close_notify(fasttls_status_t *status, fasttls_session_t *session);
 void fasttls_setup_ulp(fasttls_status_t *status, int32_t fd);
 void fasttls_setup_ktls(fasttls_status_t *status, int32_t fd, fasttls_handshake_secrets_t *handshake_secrets);
 
