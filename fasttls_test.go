@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"github.com/loopholelabs/fasttls/internal/testpki"
 	"github.com/loopholelabs/fasttls/pkg/client"
-	"github.com/loopholelabs/fasttls/pkg/connection"
 	"github.com/loopholelabs/fasttls/pkg/server"
 	"github.com/loopholelabs/testing/conn/pair"
 	"github.com/stretchr/testify/require"
@@ -165,11 +164,11 @@ func BenchmarkNativeTLS(b *testing.B) {
 
 	reader, writer := createPair(b)
 
-	testpki, err := testpki.New()
+	testPKI, err := testpki.New()
 	require.NoError(b, err)
 
 	var wg sync.WaitGroup
-	tlsReader := tls.Server(reader, testpki.ServerConfig)
+	tlsReader := tls.Server(reader, testPKI.ServerConfig)
 	wg.Add(1)
 	go func() {
 		err = tlsReader.Handshake()
@@ -177,7 +176,7 @@ func BenchmarkNativeTLS(b *testing.B) {
 		require.NoError(b, err)
 	}()
 
-	tlsWriter := tls.Client(writer, testpki.ClientConfig)
+	tlsWriter := tls.Client(writer, testPKI.ClientConfig)
 	wg.Add(1)
 	go func() {
 		err = tlsWriter.Handshake()
@@ -197,7 +196,7 @@ func BenchmarkNativeTLS(b *testing.B) {
 	_ = tlsWriter.Close()
 }
 
-func BenchmarkRustTLS(b *testing.B) {
+func BenchmarkFastTLS(b *testing.B) {
 	const testSize = 100
 
 	reader, writer := createPair(b)
@@ -205,39 +204,30 @@ func BenchmarkRustTLS(b *testing.B) {
 	testPKI, err := testpki.New()
 	require.NoError(b, err)
 
-	s, err := server.New(testPKI.ServerCert, testPKI.ServerKey, testPKI.CaCert)
+	s, err := NewServer(testPKI.ServerCert, testPKI.ServerKey, testPKI.CaCert)
 	require.NoError(b, err)
 
-	c, err := client.New(testPKI.CaCert, testPKI.ClientCert, testPKI.ClientKey)
+	c, err := NewClient(testPKI.CaCert, testPKI.ClientCert, testPKI.ClientKey, "localhost")
 	require.NoError(b, err)
 
+	var tlsReader net.Conn
+	var tlsWriter net.Conn
 	var wg sync.WaitGroup
-
-	clientSession, err := c.Session("localhost")
-	require.NoError(b, err)
-	wg.Add(1)
+	wg.Add(2)
 	go func() {
-		err := clientSession.Handshake(writer)
-		wg.Done()
+		defer wg.Done()
+		var err error
+		tlsReader, err = s.Connection(reader)
 		require.NoError(b, err)
 	}()
-
-	serverSession, err := s.Session()
-	require.NoError(b, err)
-	wg.Add(1)
 	go func() {
-		err := serverSession.Handshake(reader)
-		wg.Done()
+		defer wg.Done()
+		var err error
+		tlsWriter, err = c.Connection(writer)
 		require.NoError(b, err)
 	}()
 
 	wg.Wait()
-
-	tlsReader, err := connection.New(reader, serverSession)
-	require.NoError(b, err)
-
-	tlsWriter, err := connection.New(writer, clientSession)
-	require.NoError(b, err)
 
 	b.Run("32 Bytes", throughputRunner(testSize, 32, tlsReader, tlsWriter))
 	b.Run("512 Bytes", throughputRunner(testSize, 512, tlsReader, tlsWriter))

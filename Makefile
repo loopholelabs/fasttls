@@ -33,13 +33,17 @@ build:
 .PHONY: benchmark
 benchmark: headers build benchmark_go
 
+.PHONY: benchmark_rustls
+benchmark_rustls: headers build
+	go test -run='^$$' -bench=. -tags=rustls
+
 .PHONY: benchmark_go
 benchmark_go:
-	go test -run='^$$' -bench=. ./...
+	go test -run='^$$' -bench=.
 
 .PHONY: benchmark_go_verbose
 benchmark_go_verbose:
-	go test -run='^$$' -bench=. -v ./...
+	go test -run='^$$' -bench=. -v
 
 .PHONY: test
 test: headers build test_rust test_go
