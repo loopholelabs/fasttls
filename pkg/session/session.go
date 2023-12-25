@@ -14,11 +14,11 @@
 	limitations under the License.
 */
 
-package fasttls
+package session
 
 /*
 #cgo LDFLAGS: ./target/release/libfasttls.a -ldl
-#include "./fasttls.h"
+#include "../../fasttls.h"
 */
 import "C"
 import (
@@ -30,18 +30,16 @@ import (
 )
 
 var (
-	ErrClosed = errors.New("session is closed")
-)
-
-var (
-	bufferSize = 1024
+	ErrSessionNil          = errors.New("session is nil")
+	ErrClosed              = errors.New("session is closed")
+	ErrHandshakeInProgress = errors.New("handshake already in progress")
 )
 
 type kind uint8
 
 const (
-	kindServer kind = iota
-	kindClient
+	KindServer kind = iota
+	KindClient
 )
 
 const (
@@ -58,100 +56,22 @@ type Session struct {
 	session        *C.fasttls_session_t
 }
 
-func newSession(session *C.fasttls_session_t, kind kind) (*Session, error) {
+func New(session unsafe.Pointer, kind kind) (*Session, error) {
 	if session == nil {
-		return nil, fmt.Errorf("session is nil")
+		return nil, ErrSessionNil
 	}
 	return &Session{
-		session: session,
+		session: (*C.fasttls_session_t)(session),
 		kind:    kind,
 	}, nil
-}
-
-func (s *Session) clientHandshake(connection io.ReadWriter) error {
-	handshake := C.fasttls_handshake((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session, nil, 0)
-	if uint8(s.status) != 0 {
-		return fmt.Errorf("failed to initiate client handshake: %d", uint8(s.status))
-	}
-	encryptedData := make([]byte, bufferSize)
-HANDSHAKE:
-	for {
-		switch handshake.state {
-		case C.FASTTLS_HANDSHAKE_STATE_NEED_READ:
-		case C.FASTTLS_HANDSHAKE_STATE_NEED_WRITE, C.FASTTLS_HANDSHAKE_STATE_COMPLETE:
-			if handshake.output_data_ptr != nil && handshake.output_data_len > 0 {
-				output := unsafe.Slice((*byte)(unsafe.Pointer(handshake.output_data_ptr)), int(handshake.output_data_len))
-				_, err := connection.Write(output)
-				if err != nil {
-					C.fasttls_free_handshake(handshake)
-					return fmt.Errorf("failed to write client handshake data: %w", err)
-				}
-			}
-			if handshake.state == C.FASTTLS_HANDSHAKE_STATE_COMPLETE {
-				C.fasttls_free_handshake(handshake)
-				break HANDSHAKE
-			}
-		default:
-			C.fasttls_free_handshake(handshake)
-			return fmt.Errorf("unknown client handshake state: %d", uint8(handshake.state))
-		}
-		C.fasttls_free_handshake(handshake)
-		encryptedBytes, err := connection.Read(encryptedData)
-		if err != nil {
-			return fmt.Errorf("failed to read client handshake data: %w", err)
-		}
-		handshake = C.fasttls_handshake((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session, (*C.uint8_t)(unsafe.Pointer(&encryptedData[0])), C.uint32_t(encryptedBytes))
-		if uint8(s.status) != 0 {
-			return fmt.Errorf("failed to complete client handshake: %d", uint8(s.status))
-		}
-	}
-	s.handshakeState.Store(handshakeStateComplete)
-	return nil
-}
-
-func (s *Session) serverHandshake(connection io.ReadWriter) error {
-	encryptedData := make([]byte, bufferSize)
-HANDSHAKE:
-	for {
-		encryptedBytes, err := connection.Read(encryptedData)
-		if err != nil {
-			return fmt.Errorf("failed to read server handshake data: %w", err)
-		}
-		handshake := C.fasttls_handshake((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session, (*C.uint8_t)(unsafe.Pointer(&encryptedData[0])), C.uint32_t(encryptedBytes))
-		if uint8(s.status) != 0 {
-			return fmt.Errorf("failed to complete server handshake: %d", uint8(s.status))
-		}
-		switch handshake.state {
-		case C.FASTTLS_HANDSHAKE_STATE_NEED_READ:
-		case C.FASTTLS_HANDSHAKE_STATE_NEED_WRITE, C.FASTTLS_HANDSHAKE_STATE_COMPLETE:
-			if handshake.output_data_ptr != nil && handshake.output_data_len > 0 {
-				output := unsafe.Slice((*byte)(unsafe.Pointer(handshake.output_data_ptr)), int(handshake.output_data_len))
-				_, err = connection.Write(output)
-				if err != nil {
-					C.fasttls_free_handshake(handshake)
-					return fmt.Errorf("failed to write server handshake data: %w", err)
-				}
-			}
-			if handshake.state == C.FASTTLS_HANDSHAKE_STATE_COMPLETE {
-				C.fasttls_free_handshake(handshake)
-				break HANDSHAKE
-			}
-		default:
-			C.fasttls_free_handshake(handshake)
-			return fmt.Errorf("unknown server handshake state: %d", uint8(handshake.state))
-		}
-		C.fasttls_free_handshake(handshake)
-	}
-	s.handshakeState.Store(handshakeStateComplete)
-	return nil
 }
 
 func (s *Session) Handshake(connection io.ReadWriter) error {
 	if s.handshakeState.CompareAndSwap(handshakeStateNotComplete, handshakeStateInProgress) {
 		switch s.kind {
-		case kindClient:
+		case KindClient:
 			return s.clientHandshake(connection)
-		case kindServer:
+		case KindServer:
 			return s.serverHandshake(connection)
 		default:
 			return fmt.Errorf("unknown session kind: %d", s.kind)
@@ -159,7 +79,7 @@ func (s *Session) Handshake(connection io.ReadWriter) error {
 	}
 
 	if s.handshakeState.Load() == handshakeStateInProgress {
-		return fmt.Errorf("handshake already in progress")
+		return ErrHandshakeInProgress
 	}
 
 	return nil
@@ -281,4 +201,82 @@ func (s *Session) Free() {
 	if s.free.CompareAndSwap(false, true) {
 		C.fasttls_free_session(s.session)
 	}
+}
+
+func (s *Session) clientHandshake(connection io.ReadWriter) error {
+	handshake := C.fasttls_handshake((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session, nil, 0)
+	if uint8(s.status) != 0 {
+		return fmt.Errorf("failed to initiate client handshake: %d", uint8(s.status))
+	}
+	encryptedData := make([]byte, 1024)
+HANDSHAKE:
+	for {
+		switch handshake.state {
+		case C.FASTTLS_HANDSHAKE_STATE_NEED_READ:
+		case C.FASTTLS_HANDSHAKE_STATE_NEED_WRITE, C.FASTTLS_HANDSHAKE_STATE_COMPLETE:
+			if handshake.output_data_ptr != nil && handshake.output_data_len > 0 {
+				output := unsafe.Slice((*byte)(unsafe.Pointer(handshake.output_data_ptr)), int(handshake.output_data_len))
+				_, err := connection.Write(output)
+				if err != nil {
+					C.fasttls_free_handshake(handshake)
+					return fmt.Errorf("failed to write client handshake data: %w", err)
+				}
+			}
+			if handshake.state == C.FASTTLS_HANDSHAKE_STATE_COMPLETE {
+				C.fasttls_free_handshake(handshake)
+				break HANDSHAKE
+			}
+		default:
+			C.fasttls_free_handshake(handshake)
+			return fmt.Errorf("unknown client handshake state: %d", uint8(handshake.state))
+		}
+		C.fasttls_free_handshake(handshake)
+		encryptedBytes, err := connection.Read(encryptedData)
+		if err != nil {
+			return fmt.Errorf("failed to read client handshake data: %w", err)
+		}
+		handshake = C.fasttls_handshake((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session, (*C.uint8_t)(unsafe.Pointer(&encryptedData[0])), C.uint32_t(encryptedBytes))
+		if uint8(s.status) != 0 {
+			return fmt.Errorf("failed to complete client handshake: %d", uint8(s.status))
+		}
+	}
+	s.handshakeState.Store(handshakeStateComplete)
+	return nil
+}
+
+func (s *Session) serverHandshake(connection io.ReadWriter) error {
+	encryptedData := make([]byte, 1024)
+HANDSHAKE:
+	for {
+		encryptedBytes, err := connection.Read(encryptedData)
+		if err != nil {
+			return fmt.Errorf("failed to read server handshake data: %w", err)
+		}
+		handshake := C.fasttls_handshake((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session, (*C.uint8_t)(unsafe.Pointer(&encryptedData[0])), C.uint32_t(encryptedBytes))
+		if uint8(s.status) != 0 {
+			return fmt.Errorf("failed to complete server handshake: %d", uint8(s.status))
+		}
+		switch handshake.state {
+		case C.FASTTLS_HANDSHAKE_STATE_NEED_READ:
+		case C.FASTTLS_HANDSHAKE_STATE_NEED_WRITE, C.FASTTLS_HANDSHAKE_STATE_COMPLETE:
+			if handshake.output_data_ptr != nil && handshake.output_data_len > 0 {
+				output := unsafe.Slice((*byte)(unsafe.Pointer(handshake.output_data_ptr)), int(handshake.output_data_len))
+				_, err = connection.Write(output)
+				if err != nil {
+					C.fasttls_free_handshake(handshake)
+					return fmt.Errorf("failed to write server handshake data: %w", err)
+				}
+			}
+			if handshake.state == C.FASTTLS_HANDSHAKE_STATE_COMPLETE {
+				C.fasttls_free_handshake(handshake)
+				break HANDSHAKE
+			}
+		default:
+			C.fasttls_free_handshake(handshake)
+			return fmt.Errorf("unknown server handshake state: %d", uint8(handshake.state))
+		}
+		C.fasttls_free_handshake(handshake)
+	}
+	s.handshakeState.Store(handshakeStateComplete)
+	return nil
 }

@@ -19,7 +19,11 @@ package fasttls
 import (
 	"crypto/rand"
 	"crypto/tls"
+	"fmt"
 	"github.com/loopholelabs/fasttls/internal/testpki"
+	"github.com/loopholelabs/fasttls/pkg/client"
+	"github.com/loopholelabs/fasttls/pkg/connection"
+	"github.com/loopholelabs/fasttls/pkg/server"
 	"github.com/loopholelabs/testing/conn/pair"
 	"github.com/stretchr/testify/require"
 	"net"
@@ -27,48 +31,118 @@ import (
 	"testing"
 )
 
-func createPair(t require.TestingT) (net.Conn, net.Conn) {
-	//reader, writer := net.Pipe()
-
-	reader, writer, err := pair.New()
+func TestSession(t *testing.T) {
+	const testSize = 100000
+	testPKI, err := testpki.New()
 	require.NoError(t, err)
 
-	//reader = buffered.New(reader, 8192)
-	//writer = buffered.New(writer, 8192)
+	s, err := server.New(testPKI.ServerCert, testPKI.ServerKey, testPKI.CaCert)
+	require.NoError(t, err)
 
-	return reader, writer
-}
+	c, err := client.New(testPKI.CaCert, testPKI.ClientCert, testPKI.ClientKey)
+	require.NoError(t, err)
 
-func throughputRunner(testSize, packetSize uint32, readerConn, writerConn net.Conn) func(b *testing.B) {
-	return func(b *testing.B) {
-		b.SetBytes(int64(testSize * packetSize))
-		b.ReportAllocs()
+	serverSession, err := s.Session()
+	require.NoError(t, err)
 
-		randomData := make([]byte, packetSize)
-		_, err := rand.Read(randomData)
-		require.NoError(b, err)
+	clientSession, err := c.Session("localhost")
+	require.NoError(t, err)
 
-		readData := make([]byte, packetSize)
+	serverSocket, clientSocket, err := pair.New()
+	require.NoError(t, err)
 
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			var wg sync.WaitGroup
-			wg.Add(1)
-			go func() {
-				for x := uint32(0); x < testSize; x++ {
-					_, err := readerConn.Read(readData)
-					require.NoError(b, err)
+	clientLastMessage := "no client message"
+	serverLastMessage := "no server message"
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		t.Log("client initiating handshake")
+		err := clientSession.Handshake(clientSocket)
+		require.NoError(t, err)
+		t.Log("client handshake complete")
+
+		var i = 0
+		for i < testSize {
+			message := []byte(fmt.Sprintf("message #%d", i))
+			t.Logf("client sending: %s (i = %d)", message, i)
+			encryptedMessage, err := clientSession.Encrypt(message)
+			require.NoError(t, err)
+
+			_, err = clientSocket.Write(encryptedMessage)
+			require.NoError(t, err)
+
+			buffer := make([]byte, 1024)
+			for {
+				n, err := clientSocket.Read(buffer)
+				require.NoError(t, err)
+
+				decryptedMessage, err := clientSession.Decrypt(buffer[:n])
+				require.NoError(t, err)
+				if len(decryptedMessage) == 0 {
+					continue
 				}
-				wg.Done()
-			}()
-			for x := uint32(0); x < testSize; x++ {
-				_, err := writerConn.Write(randomData)
-				require.NoError(b, err)
+
+				clientLastMessage = string(decryptedMessage)
+				break
 			}
-			wg.Wait()
+
+			t.Logf("client received: %s (i = %d)", clientLastMessage, i)
+			i++
 		}
-		b.StopTimer()
+
+		t.Log("client closing connection")
+		err = clientSession.SendCloseNotify()
+		encrypted, err := clientSession.WriteTLS(nil)
+		require.NoError(t, err)
+		_, err = clientSocket.Write(encrypted)
+		require.NoError(t, err)
+		err = clientSocket.Close()
+		require.NoError(t, err)
+
+		wg.Done()
+	}()
+
+	t.Log("server initiating handshake")
+	err = serverSession.Handshake(serverSocket)
+	require.NoError(t, err)
+	t.Log("server handshake complete")
+
+	var i = 0
+	for i < testSize {
+		buffer := make([]byte, 1024)
+		n, err := serverSocket.Read(buffer)
+		require.NoError(t, err)
+
+		decryptedMessage, err := serverSession.Decrypt(buffer[:n])
+		require.NoError(t, err)
+
+		if len(decryptedMessage) == 0 {
+			continue
+		}
+
+		if string(decryptedMessage) == serverLastMessage {
+			panic("server received duplicate message")
+		}
+
+		serverLastMessage = string(decryptedMessage)
+		t.Logf("server received: %s (i = %d)", serverLastMessage, i)
+		encryptedMessage, err := serverSession.Encrypt(decryptedMessage)
+		require.NoError(t, err)
+
+		_, err = serverSocket.Write(encryptedMessage)
+		require.NoError(t, err)
+		i++
 	}
+
+	wg.Wait()
+
+	require.Equal(t, clientLastMessage, serverLastMessage)
+
+	clientSession.Free()
+	serverSession.Free()
+	s.Free()
+	c.Free()
 }
 
 func BenchmarkRaw(b *testing.B) {
@@ -128,18 +202,18 @@ func BenchmarkRustTLS(b *testing.B) {
 
 	reader, writer := createPair(b)
 
-	testpki, err := testpki.New()
+	testPKI, err := testpki.New()
 	require.NoError(b, err)
 
-	server, err := NewServer(testpki.ServerCert, testpki.ServerKey, testpki.CaCert)
+	s, err := server.New(testPKI.ServerCert, testPKI.ServerKey, testPKI.CaCert)
 	require.NoError(b, err)
 
-	client, err := NewClient(testpki.CaCert, testpki.ClientCert, testpki.ClientKey)
+	c, err := client.New(testPKI.CaCert, testPKI.ClientCert, testPKI.ClientKey)
 	require.NoError(b, err)
 
 	var wg sync.WaitGroup
 
-	clientSession, err := client.Session("localhost")
+	clientSession, err := c.Session("localhost")
 	require.NoError(b, err)
 	wg.Add(1)
 	go func() {
@@ -148,7 +222,7 @@ func BenchmarkRustTLS(b *testing.B) {
 		require.NoError(b, err)
 	}()
 
-	serverSession, err := server.Session()
+	serverSession, err := s.Session()
 	require.NoError(b, err)
 	wg.Add(1)
 	go func() {
@@ -159,10 +233,10 @@ func BenchmarkRustTLS(b *testing.B) {
 
 	wg.Wait()
 
-	tlsReader, err := NewConn(reader, serverSession)
+	tlsReader, err := connection.New(reader, serverSession)
 	require.NoError(b, err)
 
-	tlsWriter, err := NewConn(writer, clientSession)
+	tlsWriter, err := connection.New(writer, clientSession)
 	require.NoError(b, err)
 
 	b.Run("32 Bytes", throughputRunner(testSize, 32, tlsReader, tlsWriter))
@@ -173,4 +247,42 @@ func BenchmarkRustTLS(b *testing.B) {
 
 	_ = reader.Close()
 	_ = writer.Close()
+}
+
+func createPair(t require.TestingT) (net.Conn, net.Conn) {
+	reader, writer, err := pair.New()
+	require.NoError(t, err)
+	return reader, writer
+}
+
+func throughputRunner(testSize, packetSize uint32, readerConn, writerConn net.Conn) func(b *testing.B) {
+	return func(b *testing.B) {
+		b.SetBytes(int64(testSize * packetSize))
+		b.ReportAllocs()
+
+		randomData := make([]byte, packetSize)
+		_, err := rand.Read(randomData)
+		require.NoError(b, err)
+
+		readData := make([]byte, packetSize)
+
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go func() {
+				for x := uint32(0); x < testSize; x++ {
+					_, err := readerConn.Read(readData)
+					require.NoError(b, err)
+				}
+				wg.Done()
+			}()
+			for x := uint32(0); x < testSize; x++ {
+				_, err := writerConn.Write(randomData)
+				require.NoError(b, err)
+			}
+			wg.Wait()
+		}
+		b.StopTimer()
+	}
 }

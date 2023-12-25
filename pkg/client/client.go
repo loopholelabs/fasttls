@@ -14,22 +14,23 @@
 	limitations under the License.
 */
 
-package fasttls
+package client
 
 /*
 #cgo LDFLAGS: ./target/release/libfasttls.a -ldl
-#include "./fasttls.h"
+#include "../../fasttls.h"
 */
 import "C"
 import (
 	"errors"
 	"fmt"
+	"github.com/loopholelabs/fasttls/pkg/session"
 	"sync/atomic"
 	"unsafe"
 )
 
 var (
-	ErrClientFreed = errors.New("client has been freed")
+	ErrFreed = errors.New("client has been freed")
 )
 
 type Client struct {
@@ -38,7 +39,7 @@ type Client struct {
 	client *C.fasttls_client_t
 }
 
-func NewClient(caCert []byte, clientAuthCert []byte, clientAuthKey []byte) (*Client, error) {
+func New(caCert []byte, clientAuthCert []byte, clientAuthKey []byte) (*Client, error) {
 	client := new(Client)
 
 	var caDataPtr *C.uint8_t = nil
@@ -71,16 +72,17 @@ func NewClient(caCert []byte, clientAuthCert []byte, clientAuthKey []byte) (*Cli
 
 	return client, nil
 }
-func (c *Client) Session(serverName string) (*Session, error) {
+
+func (c *Client) Session(serverName string) (*session.Session, error) {
 	if c.free.Load() {
-		return nil, ErrClientFreed
+		return nil, ErrFreed
 	}
 	s := C.CString(serverName)
-	session := C.fasttls_client_session((*C.fasttls_status_t)(unsafe.Pointer(&c.status)), c.client, (*C.int8_t)(unsafe.Pointer(s)))
+	sess := C.fasttls_client_session((*C.fasttls_status_t)(unsafe.Pointer(&c.status)), c.client, (*C.int8_t)(unsafe.Pointer(s)))
 	if uint8(c.status) != 0 {
 		return nil, fmt.Errorf("failed to create client session: %d", uint8(c.status))
 	}
-	return newSession(session, kindClient)
+	return session.New(unsafe.Pointer(sess), session.KindClient)
 }
 
 func (c *Client) Free() {

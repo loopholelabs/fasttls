@@ -14,22 +14,23 @@
 	limitations under the License.
 */
 
-package fasttls
+package server
 
 /*
 #cgo LDFLAGS: ./target/release/libfasttls.a -ldl
-#include "./fasttls.h"
+#include "../../fasttls.h"
 */
 import "C"
 import (
 	"errors"
 	"fmt"
+	"github.com/loopholelabs/fasttls/pkg/session"
 	"sync/atomic"
 	"unsafe"
 )
 
 var (
-	ErrServerFreed = errors.New("server has been freed")
+	ErrFreed = errors.New("server has been freed")
 )
 
 type Server struct {
@@ -38,7 +39,7 @@ type Server struct {
 	server *C.fasttls_server_t
 }
 
-func NewServer(cert []byte, key []byte, clientCaCert []byte) (*Server, error) {
+func New(cert []byte, key []byte, clientCaCert []byte) (*Server, error) {
 	server := new(Server)
 
 	var clientCaCertPtr *C.uint8_t = nil
@@ -58,15 +59,15 @@ func NewServer(cert []byte, key []byte, clientCaCert []byte) (*Server, error) {
 	return server, nil
 }
 
-func (s *Server) Session() (*Session, error) {
+func (s *Server) Session() (*session.Session, error) {
 	if s.free.Load() {
-		return nil, ErrServerFreed
+		return nil, ErrFreed
 	}
-	session := C.fasttls_server_session((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.server)
+	sess := C.fasttls_server_session((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.server)
 	if uint8(s.status) != 0 {
 		return nil, fmt.Errorf("failed to create server session: %d", uint8(s.status))
 	}
-	return newSession(session, kindServer)
+	return session.New(unsafe.Pointer(sess), session.KindServer)
 }
 
 func (s *Server) Free() {

@@ -14,7 +14,7 @@
 	limitations under the License.
 */
 
-package fasttls
+package server
 
 import (
 	"github.com/loopholelabs/fasttls/internal/testpki"
@@ -22,12 +22,16 @@ import (
 	"testing"
 )
 
-func TestClient(t *testing.T) {
+func TestServer(t *testing.T) {
 	testPKI, err := testpki.New()
 	require.NoError(t, err)
 
-	c, err := NewClient(testPKI.CaCert, testPKI.ClientCert, testPKI.ClientKey)
+	s, err := New(testPKI.ServerCert, testPKI.ServerKey, testPKI.CaCert)
 	require.NoError(t, err)
 
-	c.Free()
+	session, err := s.Session()
+	require.NoError(t, err)
+
+	session.Free()
+	s.Free()
 }
