@@ -27,6 +27,18 @@ import (
 	"testing"
 )
 
+func createPair(t require.TestingT) (net.Conn, net.Conn) {
+	//reader, writer := net.Pipe()
+
+	reader, writer, err := pair.New()
+	require.NoError(t, err)
+
+	//reader = buffered.New(reader, 8192)
+	//writer = buffered.New(writer, 8192)
+
+	return reader, writer
+}
+
 func throughputRunner(testSize, packetSize uint32, readerConn, writerConn net.Conn) func(b *testing.B) {
 	return func(b *testing.B) {
 		b.SetBytes(int64(testSize * packetSize))
@@ -40,35 +52,20 @@ func throughputRunner(testSize, packetSize uint32, readerConn, writerConn net.Co
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			done := make(chan struct{}, 1)
-			errCh := make(chan error, 1)
+			var wg sync.WaitGroup
+			wg.Add(1)
 			go func() {
-				for i := uint32(0); i < testSize; i++ {
+				for x := uint32(0); x < testSize; x++ {
 					_, err := readerConn.Read(readData)
-					if err != nil {
-						errCh <- err
-						return
-					}
+					require.NoError(b, err)
 				}
-				done <- struct{}{}
+				wg.Done()
 			}()
-			for i := uint32(0); i < testSize; i++ {
-				select {
-				case err = <-errCh:
-					b.Fatal(err)
-				default:
-					_, err = writerConn.Write(randomData)
-					if err != nil {
-						b.Fatal(err)
-					}
-				}
+			for x := uint32(0); x < testSize; x++ {
+				_, err := writerConn.Write(randomData)
+				require.NoError(b, err)
 			}
-			select {
-			case <-done:
-				continue
-			case err = <-errCh:
-				b.Fatal(err)
-			}
+			wg.Wait()
 		}
 		b.StopTimer()
 	}
@@ -77,8 +74,7 @@ func throughputRunner(testSize, packetSize uint32, readerConn, writerConn net.Co
 func BenchmarkRaw(b *testing.B) {
 	const testSize = 100
 
-	reader, writer, err := pair.New()
-	require.NoError(b, err)
+	reader, writer := createPair(b)
 
 	b.Run("32 Bytes", throughputRunner(testSize, 32, reader, writer))
 	b.Run("512 Bytes", throughputRunner(testSize, 512, reader, writer))
@@ -93,8 +89,7 @@ func BenchmarkRaw(b *testing.B) {
 func BenchmarkNativeTLS(b *testing.B) {
 	const testSize = 100
 
-	reader, writer, err := pair.New()
-	require.NoError(b, err)
+	reader, writer := createPair(b)
 
 	testpki, err := testpki.New()
 	require.NoError(b, err)
@@ -131,8 +126,7 @@ func BenchmarkNativeTLS(b *testing.B) {
 func BenchmarkRustTLS(b *testing.B) {
 	const testSize = 100
 
-	reader, writer, err := pair.New()
-	require.NoError(b, err)
+	reader, writer := createPair(b)
 
 	testpki, err := testpki.New()
 	require.NoError(b, err)
@@ -165,11 +159,17 @@ func BenchmarkRustTLS(b *testing.B) {
 
 	wg.Wait()
 
-	b.Run("32 Bytes", throughputRunner(testSize, 32, reader, writer))
-	b.Run("512 Bytes", throughputRunner(testSize, 512, reader, writer))
-	b.Run("1024 Bytes", throughputRunner(testSize, 1024, reader, writer))
-	b.Run("2048 Bytes", throughputRunner(testSize, 2048, reader, writer))
-	b.Run("4096 Bytes", throughputRunner(testSize, 4096, reader, writer))
+	tlsReader, err := NewConn(reader, serverSession)
+	require.NoError(b, err)
+
+	tlsWriter, err := NewConn(writer, clientSession)
+	require.NoError(b, err)
+
+	b.Run("32 Bytes", throughputRunner(testSize, 32, tlsReader, tlsWriter))
+	b.Run("512 Bytes", throughputRunner(testSize, 512, tlsReader, tlsWriter))
+	b.Run("1024 Bytes", throughputRunner(testSize, 1024, tlsReader, tlsWriter))
+	b.Run("2048 Bytes", throughputRunner(testSize, 2048, tlsReader, tlsWriter))
+	b.Run("4096 Bytes", throughputRunner(testSize, 4096, tlsReader, tlsWriter))
 
 	_ = reader.Close()
 	_ = writer.Close()

@@ -26,6 +26,7 @@ import (
 )
 
 func TestSession(t *testing.T) {
+	const testSize = 100000
 	testPKI, err := testpki.New()
 	require.NoError(t, err)
 
@@ -55,9 +56,10 @@ func TestSession(t *testing.T) {
 		require.NoError(t, err)
 		t.Log("client handshake complete")
 
-		for i := 0; i < 1000; i++ {
+		var i = 0
+		for i < testSize {
 			message := []byte(fmt.Sprintf("message #%d", i))
-			t.Logf("client sending: %s", message)
+			t.Logf("client sending: %s (i = %d)", message, i)
 			encryptedMessage, err := clientSession.Encrypt(message)
 			require.NoError(t, err)
 
@@ -65,18 +67,22 @@ func TestSession(t *testing.T) {
 			require.NoError(t, err)
 
 			buffer := make([]byte, bufferSize)
-			n, err := clientSocket.Read(buffer)
-			require.NoError(t, err)
+			for {
+				n, err := clientSocket.Read(buffer)
+				require.NoError(t, err)
 
-			decryptedMessage, err := clientSession.Decrypt(buffer[:n])
-			require.NoError(t, err)
-			if len(decryptedMessage) == 0 {
-				i--
-				continue
+				decryptedMessage, err := clientSession.Decrypt(buffer[:n])
+				require.NoError(t, err)
+				if len(decryptedMessage) == 0 {
+					continue
+				}
+
+				clientLastMessage = string(decryptedMessage)
+				break
 			}
 
-			clientLastMessage = string(decryptedMessage)
-			t.Logf("client received: %s", clientLastMessage)
+			t.Logf("client received: %s (i = %d)", clientLastMessage, i)
+			i++
 		}
 
 		t.Log("client closing connection")
@@ -96,7 +102,8 @@ func TestSession(t *testing.T) {
 	require.NoError(t, err)
 	t.Log("server handshake complete")
 
-	for i := 0; i < 1000; i++ {
+	var i = 0
+	for i < testSize {
 		buffer := make([]byte, bufferSize)
 		n, err := serverSocket.Read(buffer)
 		require.NoError(t, err)
@@ -105,17 +112,21 @@ func TestSession(t *testing.T) {
 		require.NoError(t, err)
 
 		if len(decryptedMessage) == 0 {
-			i--
 			continue
 		}
 
+		if string(decryptedMessage) == serverLastMessage {
+			panic("server received duplicate message")
+		}
+
 		serverLastMessage = string(decryptedMessage)
-		t.Logf("server received: %s", serverLastMessage)
+		t.Logf("server received: %s (i = %d)", serverLastMessage, i)
 		encryptedMessage, err := serverSession.Encrypt(decryptedMessage)
 		require.NoError(t, err)
 
 		_, err = serverSocket.Write(encryptedMessage)
 		require.NoError(t, err)
+		i++
 	}
 
 	wg.Wait()

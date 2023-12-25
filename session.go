@@ -165,6 +165,10 @@ func (s *Session) Handshake(connection io.ReadWriter) error {
 	return nil
 }
 
+func (s *Session) HandshakeComplete() bool {
+	return s.handshakeState.Load() == handshakeStateComplete
+}
+
 func (s *Session) WritePlaintext(plaintext []byte) error {
 	if plaintext == nil {
 		C.fasttls_write_plaintext((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session, nil, 0)
@@ -203,7 +207,7 @@ func (s *Session) Encrypt(plaintext []byte) ([]byte, error) {
 
 func (s *Session) ReadTLS(encrypted []byte) error {
 	if encrypted == nil {
-		C.fasttls_read_tls((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session, nil, 0)
+		return nil
 	} else {
 		C.fasttls_read_tls((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session, (*C.uint8_t)(unsafe.Pointer(&encrypted[0])), C.uint32_t(len(encrypted)))
 	}
@@ -234,6 +238,27 @@ func (s *Session) ReadPlaintext(plaintext []byte) ([]byte, error) {
 	plaintext = plaintext[:copy(plaintext, unsafe.Slice((*byte)(unsafe.Pointer(buffer.data_ptr)), int(buffer.data_len)))]
 	C.fasttls_free_buffer(buffer)
 	return plaintext, nil
+}
+
+func (s *Session) ReadPlaintextSize(plaintext []byte) (int, error) {
+	buffer := C.fasttls_read_plaintext_size((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session, C.uint32_t(len(plaintext)))
+	if uint8(s.status) != 0 {
+		closed := C.fasttls_is_closed((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session)
+		if uint8(s.status) != 0 {
+			return 0, fmt.Errorf("failed to read plaintext data: %d", uint8(s.status))
+		}
+		if bool(closed) {
+			return 0, ErrClosed
+		}
+		return 0, fmt.Errorf("failed to read plaintext data: %d", uint8(s.status))
+	}
+	if buffer.data_ptr == nil || buffer.data_len == 0 {
+		return 0, nil
+	}
+	bufferLen := int(buffer.data_len)
+	copy(plaintext, unsafe.Slice((*byte)(unsafe.Pointer(buffer.data_ptr)), bufferLen))
+	C.fasttls_free_buffer(buffer)
+	return bufferLen, nil
 }
 
 func (s *Session) Decrypt(encrypted []byte) ([]byte, error) {
