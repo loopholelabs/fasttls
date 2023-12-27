@@ -1,5 +1,3 @@
-//go:build !linux && !rustls
-
 /*
 	Copyright 2023 Loophole Labs
 
@@ -16,45 +14,72 @@
 	limitations under the License.
 */
 
-package fasttls
+package std
 
 import (
-	"github.com/loopholelabs/fasttls/pkg/std"
+	"crypto/tls"
+	"crypto/x509"
 	"net"
 )
 
 type Server struct {
-	server *std.Server
+	config *tls.Config
 }
 
 type Client struct {
-	client *std.Client
+	config *tls.Config
 }
 
 func NewServer(certificate []byte, key []byte, clientCACert []byte) (*Server, error) {
-	server, err := std.NewServer(certificate, key, clientCACert)
+	cert, err := tls.X509KeyPair(certificate, key)
 	if err != nil {
 		return nil, err
 	}
+
+	config := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+	}
+
+	if len(clientCACert) > 0 {
+		config.ClientCAs = x509.NewCertPool()
+		config.ClientCAs.AppendCertsFromPEM(clientCACert)
+		config.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+
 	return &Server{
-		server: server,
+		config: config,
 	}, nil
 }
 
 func NewClient(caCert []byte, clientAuthCert []byte, clientAuthKey []byte, serverName string) (*Client, error) {
-	client, err := std.NewClient(caCert, clientAuthCert, clientAuthKey, serverName)
-	if err != nil {
-		return nil, err
+	config := &tls.Config{
+		ServerName: serverName,
 	}
+
+	if len(caCert) > 0 {
+		config.RootCAs = x509.NewCertPool()
+		config.RootCAs.AppendCertsFromPEM(caCert)
+	}
+
+	if len(clientAuthCert) > 0 && len(clientAuthKey) > 0 {
+		cert, err := tls.X509KeyPair(clientAuthCert, clientAuthKey)
+		if err != nil {
+			return nil, err
+		}
+		config.Certificates = []tls.Certificate{cert}
+	}
+
 	return &Client{
-		client: client,
+		config: config,
 	}, nil
 }
 
 func (s *Server) Connection(conn net.Conn) (net.Conn, error) {
-	return s.server.Connection(conn)
+	tlsConn := tls.Server(conn, s.config)
+	return tlsConn, tlsConn.Handshake()
 }
 
 func (c *Client) Connection(conn net.Conn) (net.Conn, error) {
-	return c.client.Connection(conn)
+	tlsConn := tls.Client(conn, c.config)
+	return tlsConn, tlsConn.Handshake()
 }

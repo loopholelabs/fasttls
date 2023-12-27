@@ -30,9 +30,10 @@ import (
 )
 
 var (
-	ErrSessionNil          = errors.New("session is nil")
-	ErrClosed              = errors.New("session is closed")
-	ErrHandshakeInProgress = errors.New("handshake already in progress")
+	ErrSessionNil           = errors.New("session is nil")
+	ErrClosed               = errors.New("session is closed")
+	ErrHandshakeInProgress  = errors.New("handshake already in progress")
+	ErrHandshakeNotComplete = errors.New("handshake is not complete")
 )
 
 type kind uint8
@@ -46,6 +47,7 @@ const (
 	handshakeStateNotComplete = iota
 	handshakeStateInProgress
 	handshakeStateComplete
+	handshakeStateUnknown
 )
 
 type Session struct {
@@ -90,6 +92,110 @@ func (s *Session) HandshakeComplete() bool {
 }
 
 func (s *Session) WritePlaintext(plaintext []byte) error {
+	if s.HandshakeComplete() {
+		return s.writePlaintext(plaintext)
+	}
+
+	return ErrHandshakeNotComplete
+}
+
+func (s *Session) WriteTLS(encrypted []byte) ([]byte, error) {
+	if s.HandshakeComplete() {
+		return s.writeTLS(encrypted)
+	}
+
+	return nil, ErrHandshakeNotComplete
+}
+
+func (s *Session) Encrypt(plaintext []byte) ([]byte, error) {
+	if s.HandshakeComplete() {
+		err := s.writePlaintext(plaintext)
+		if err != nil {
+			return nil, err
+		}
+		return s.writeTLS(nil)
+	}
+
+	return nil, ErrHandshakeNotComplete
+}
+
+func (s *Session) ReadTLS(encrypted []byte) error {
+	if s.HandshakeComplete() {
+		return s.readTLS(encrypted)
+	}
+
+	return ErrHandshakeNotComplete
+}
+
+func (s *Session) ReadPlaintext(plaintext []byte) ([]byte, error) {
+	if s.HandshakeComplete() {
+		return s.readPlaintext(plaintext)
+	}
+
+	return nil, ErrHandshakeNotComplete
+}
+
+func (s *Session) ReadPlaintextSize(plaintext []byte) (int, error) {
+	if s.HandshakeComplete() {
+		return s.readPlaintextSize(plaintext)
+	}
+
+	return 0, ErrHandshakeNotComplete
+}
+
+func (s *Session) Decrypt(encrypted []byte) ([]byte, error) {
+	if s.HandshakeComplete() {
+		err := s.readTLS(encrypted)
+		if err != nil {
+			return nil, err
+		}
+		return s.readPlaintext(nil)
+	}
+
+	return nil, ErrHandshakeNotComplete
+}
+
+func (s *Session) UnsafeSecrets() (unsafe.Pointer, error) {
+	if s.HandshakeComplete() {
+		secrets := C.fasttls_secrets((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session)
+		if uint8(s.status) != 0 {
+			closed := C.fasttls_is_closed((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session)
+			if uint8(s.status) != 0 {
+				return nil, fmt.Errorf("failed to get handshake secrets: %d", uint8(s.status))
+			}
+			if bool(closed) {
+				return nil, ErrClosed
+			}
+			return nil, fmt.Errorf("failed to get handshake secrets: %d", uint8(s.status))
+		}
+
+		s.Free()
+		return unsafe.Pointer(secrets), nil
+	}
+
+	return nil, ErrHandshakeNotComplete
+}
+
+func (s *Session) SendCloseNotify() error {
+	if s.HandshakeComplete() {
+		C.fasttls_send_close_notify((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session)
+		if uint8(s.status) != 0 {
+			return fmt.Errorf("failed to send close notify: %d", uint8(s.status))
+		}
+		return nil
+	}
+
+	return ErrHandshakeNotComplete
+}
+
+func (s *Session) Free() {
+	if s.free.CompareAndSwap(false, true) {
+		s.handshakeState.Store(handshakeStateUnknown)
+		C.fasttls_free_session(s.session)
+	}
+}
+
+func (s *Session) writePlaintext(plaintext []byte) error {
 	if plaintext == nil {
 		C.fasttls_write_plaintext((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session, nil, 0)
 	} else {
@@ -101,7 +207,7 @@ func (s *Session) WritePlaintext(plaintext []byte) error {
 	return nil
 }
 
-func (s *Session) WriteTLS(encrypted []byte) ([]byte, error) {
+func (s *Session) writeTLS(encrypted []byte) ([]byte, error) {
 	buffer := C.fasttls_write_tls((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session)
 	if uint8(s.status) != 0 {
 		return nil, fmt.Errorf("failed to write tls data: %d", uint8(s.status))
@@ -117,15 +223,7 @@ func (s *Session) WriteTLS(encrypted []byte) ([]byte, error) {
 	return encrypted, nil
 }
 
-func (s *Session) Encrypt(plaintext []byte) ([]byte, error) {
-	err := s.WritePlaintext(plaintext)
-	if err != nil {
-		return nil, err
-	}
-	return s.WriteTLS(nil)
-}
-
-func (s *Session) ReadTLS(encrypted []byte) error {
+func (s *Session) readTLS(encrypted []byte) error {
 	if encrypted == nil {
 		return nil
 	} else {
@@ -137,7 +235,7 @@ func (s *Session) ReadTLS(encrypted []byte) error {
 	return nil
 }
 
-func (s *Session) ReadPlaintext(plaintext []byte) ([]byte, error) {
+func (s *Session) readPlaintext(plaintext []byte) ([]byte, error) {
 	buffer := C.fasttls_read_plaintext((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session)
 	if uint8(s.status) != 0 {
 		closed := C.fasttls_is_closed((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session)
@@ -160,7 +258,7 @@ func (s *Session) ReadPlaintext(plaintext []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
-func (s *Session) ReadPlaintextSize(plaintext []byte) (int, error) {
+func (s *Session) readPlaintextSize(plaintext []byte) (int, error) {
 	buffer := C.fasttls_read_plaintext_size((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session, C.uint32_t(len(plaintext)))
 	if uint8(s.status) != 0 {
 		closed := C.fasttls_is_closed((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session)
@@ -179,28 +277,6 @@ func (s *Session) ReadPlaintextSize(plaintext []byte) (int, error) {
 	copy(plaintext, unsafe.Slice((*byte)(unsafe.Pointer(buffer.data_ptr)), bufferLen))
 	C.fasttls_free_buffer(buffer)
 	return bufferLen, nil
-}
-
-func (s *Session) Decrypt(encrypted []byte) ([]byte, error) {
-	err := s.ReadTLS(encrypted)
-	if err != nil {
-		return nil, err
-	}
-	return s.ReadPlaintext(nil)
-}
-
-func (s *Session) SendCloseNotify() error {
-	C.fasttls_send_close_notify((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), s.session)
-	if uint8(s.status) != 0 {
-		return fmt.Errorf("failed to send close notify: %d", uint8(s.status))
-	}
-	return nil
-}
-
-func (s *Session) Free() {
-	if s.free.CompareAndSwap(false, true) {
-		C.fasttls_free_session(s.session)
-	}
 }
 
 func (s *Session) clientHandshake(connection io.ReadWriter) error {
@@ -240,7 +316,9 @@ HANDSHAKE:
 			return fmt.Errorf("failed to complete client handshake: %d", uint8(s.status))
 		}
 	}
-	s.handshakeState.Store(handshakeStateComplete)
+	if !s.handshakeState.CompareAndSwap(handshakeStateInProgress, handshakeStateComplete) {
+		return ErrSessionNil
+	}
 	return nil
 }
 
@@ -277,6 +355,8 @@ HANDSHAKE:
 		}
 		C.fasttls_free_handshake(handshake)
 	}
-	s.handshakeState.Store(handshakeStateComplete)
+	if !s.handshakeState.CompareAndSwap(handshakeStateInProgress, handshakeStateComplete) {
+		return ErrSessionNil
+	}
 	return nil
 }

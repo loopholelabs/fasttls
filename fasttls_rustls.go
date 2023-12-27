@@ -1,4 +1,4 @@
-//go:build rustls
+//go:build linux && rustls
 
 /*
 	Copyright 2023 Loophole Labs
