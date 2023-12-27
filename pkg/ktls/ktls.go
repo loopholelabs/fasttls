@@ -106,7 +106,7 @@ func (s *Server) Connection(conn net.Conn) (net.Conn, error) {
 			return
 		}
 
-		C.fasttls_setup_ktls((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), *(*C.int32_t)(unsafe.Pointer(&fd)), secrets)
+		C.fasttls_setup_ktls((*C.fasttls_status_t)(unsafe.Pointer(&s.status)), *(*C.int32_t)(unsafe.Pointer(&fd)), (*C.fasttls_handshake_secrets_t)(secrets))
 		if uint8(s.status) != 0 {
 			setupError = fmt.Errorf("failed to get setup kTLS: %d", uint8(s.status))
 		}
@@ -159,7 +159,7 @@ func (c *Client) Connection(conn net.Conn) (net.Conn, error) {
 			return
 		}
 
-		C.fasttls_setup_ktls((*C.fasttls_status_t)(unsafe.Pointer(&c.status)), *(*C.int32_t)(unsafe.Pointer(&fd)), secrets)
+		C.fasttls_setup_ktls((*C.fasttls_status_t)(unsafe.Pointer(&c.status)), *(*C.int32_t)(unsafe.Pointer(&fd)), (*C.fasttls_handshake_secrets_t)(secrets))
 		if uint8(c.status) != 0 {
 			setupError = fmt.Errorf("failed to get setup kTLS: %d", uint8(c.status))
 		}
