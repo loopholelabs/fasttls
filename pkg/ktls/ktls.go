@@ -16,6 +16,10 @@
 
 package ktls
 
+/*
+#cgo LDFLAGS: ./target/release/libfasttls.a -ldl
+#include "../../fasttls.h"
+*/
 import "C"
 import (
 	"errors"
@@ -24,13 +28,6 @@ import (
 	"github.com/loopholelabs/fasttls/pkg/server"
 	"net"
 	"unsafe"
-)
-
-const (
-	TCP_ULP = 31
-	SOL_TLS = 282
-	TLS_TX  = 1
-	TLS_RX  = 2
 )
 
 var (
