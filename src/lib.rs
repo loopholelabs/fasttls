@@ -228,7 +228,7 @@ mod tests {
                             }
                         }
                     }
-                    match client_session.read_plaintext() {
+                    match client_session.read_plaintext(None) {
                         Ok(message) => {
                             if message.len() == 0 {
                                 if client_session.is_closed() {
@@ -294,7 +294,7 @@ mod tests {
                             }
                         }
                     }
-                    match server_session.read_plaintext() {
+                    match server_session.read_plaintext(None) {
                         Ok(message) => {
                             if message.len() == 0 {
                                 if server_session.is_closed() {

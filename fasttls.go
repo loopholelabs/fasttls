@@ -15,16 +15,3 @@
 */
 
 package fasttls
-
-/*
-#cgo LDFLAGS: ./target/release/libfasttls.a -ldl
-#include "./fasttls.h"
-*/
-import "C"
-
-const (
-	TCP_ULP = 31
-	SOL_TLS = 282
-	TLS_TX  = 1
-	TLS_RX  = 2
-)

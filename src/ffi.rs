@@ -478,7 +478,41 @@ pub extern "C" fn fasttls_read_plaintext(status: *mut Status, session: *mut sess
         return std::ptr::null_mut();
     }
 
-    match unsafe { (&mut *session).read_plaintext() } {
+    match unsafe { (&mut *session).read_plaintext(None) } {
+        Ok(data) => {
+            unsafe {
+                *status = Status::Pass
+            };
+            if data.len() > 0 {
+                let mut boxed_data = Box::new(data);
+                let buffer = Buffer::boxed_raw(boxed_data.as_mut_ptr(), boxed_data.len() as u32);
+                std::mem::forget(boxed_data);
+                return buffer;
+            }
+            Buffer::boxed_raw(std::ptr::null_mut(), 0)
+
+        }
+        Err(_) => {
+            unsafe {
+                *status = Status::Fail;
+            }
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn fasttls_read_plaintext_size(status: *mut Status, session: *mut session::Session, size: u32) -> *mut Buffer {
+    Status::check_not_null(status);
+
+    if session.is_null() {
+        unsafe {
+            *status = Status::NullPointer;
+        }
+        return std::ptr::null_mut();
+    }
+
+    match unsafe { (&mut *session).read_plaintext(Some(size)) } {
         Ok(data) => {
             unsafe {
                 *status = Status::Pass

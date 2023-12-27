@@ -14,11 +14,20 @@
 	limitations under the License.
 */
 
-package fasttls
+package client
 
-import "net"
+import (
+	"github.com/loopholelabs/fasttls/internal/testpki"
+	"github.com/stretchr/testify/require"
+	"testing"
+)
 
-type TCPConn struct {
-	conn    *net.TCPConn
-	session *Session
+func TestClient(t *testing.T) {
+	testPKI, err := testpki.New()
+	require.NoError(t, err)
+
+	c, err := New(testPKI.CaCert, testPKI.ClientCert, testPKI.ClientKey)
+	require.NoError(t, err)
+
+	c.Free()
 }

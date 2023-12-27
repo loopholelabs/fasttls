@@ -103,6 +103,7 @@ void fasttls_free_secrets(fasttls_handshake_secrets_t *secrets);
 void fasttls_read_tls(fasttls_status_t *status, fasttls_session_t *session, uint8_t *data_ptr, uint32_t data_len);
 void fasttls_write_plaintext(fasttls_status_t *status, fasttls_session_t *session, uint8_t *data_ptr, uint32_t data_len);
 fasttls_buffer_t *fasttls_read_plaintext(fasttls_status_t *status, fasttls_session_t *session);
+fasttls_buffer_t *fasttls_read_plaintext_size(fasttls_status_t *status, fasttls_session_t *session, uint32_t size);
 fasttls_buffer_t *fasttls_write_tls(fasttls_status_t *status, fasttls_session_t *session);
 void fasttls_free_buffer(fasttls_buffer_t *buffer);
 

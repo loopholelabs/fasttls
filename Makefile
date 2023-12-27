@@ -30,21 +30,40 @@ headers: $(CLIB_HEADER) $(CLIB_PKG_CONFIG)
 build:
 	cargo build --release
 
+.PHONY: benchmark
+benchmark: headers build benchmark_go
+
+.PHONY: benchmark_rustls
+benchmark_rustls: headers build
+	go test -run='^$$' -bench=. -tags=rustls
+
+.PHONY: benchmark_go
+benchmark_go:
+	go test -run='^$$' -bench=.
+
+.PHONY: benchmark_go_verbose
+benchmark_go_verbose:
+	go test -run='^$$' -bench=. -v
+
 .PHONY: test
 test: headers build test_rust test_go
 
 .PHONY: test_verbose
 test_verbose: headers build test_rust_verbose test_go_verbose
 
+.PHONY: test_rust
 test_rust:
 	cargo test
 
+.PHONY: test_rust_verbose
 test_rust_verbose:
 	cargo test -- --nocapture
 
+.PHONY: test_go
 test_go:
 	go test ./...
 
+.PHONY: test_go_verbose
 test_go_verbose:
 	go test ./... -v
 

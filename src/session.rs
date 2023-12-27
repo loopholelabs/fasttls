@@ -131,17 +131,34 @@ impl Session {
         self.read_tls_from_reader(&mut Cursor::new(data))
     }
 
-    // read_plaintext reads TLS bytes from the session and returns a vector of bytes
-    pub fn read_plaintext(&mut self) -> Result<Box<[u8]>, Error> {
+    // read_plaintext_sized reads TLS bytes from the session and returns a vector of bytes
+    pub fn read_plaintext(&mut self, size: Option<u32>) -> Result<Box<[u8]>, Error> {
         if self.plaintext_bytes == 0 && self.closed {
             return Err(Error::new(ErrorKind::Closed, "peer has closed the connection".into()));
         }
         let mut reader = self.session.reader();
-        let mut plaintext_bytes = Vec::with_capacity(self.plaintext_bytes);
-        unsafe { plaintext_bytes.set_len(self.plaintext_bytes) };
+        let mut plaintext_bytes = match size {
+            Some(size) => {
+                let size = size as usize;
+                if size > self.plaintext_bytes {
+                    let mut plaintext_bytes = Vec::with_capacity(self.plaintext_bytes);
+                    unsafe { plaintext_bytes.set_len(self.plaintext_bytes) };
+                    plaintext_bytes
+                } else {
+                    let mut plaintext_bytes = Vec::with_capacity(size);
+                    unsafe { plaintext_bytes.set_len(size) };
+                    plaintext_bytes
+                }
+            }
+            None => {
+                let mut plaintext_bytes = Vec::with_capacity(self.plaintext_bytes);
+                unsafe { plaintext_bytes.set_len(self.plaintext_bytes) };
+                plaintext_bytes
+            }
+        };
         match reader.read(plaintext_bytes.as_mut_slice()) {
-            Ok(_) => {
-                self.plaintext_bytes = 0;
+            Ok(read_bytes) => {
+                self.plaintext_bytes -= read_bytes;
             }
             Err(err) => {
                 if err.kind() != io::ErrorKind::WouldBlock {

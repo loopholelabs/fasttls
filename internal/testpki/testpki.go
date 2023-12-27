@@ -21,6 +21,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -30,11 +31,13 @@ import (
 )
 
 type TestPKI struct {
-	CaCert     []byte
-	ClientCert []byte
-	ClientKey  []byte
-	ServerCert []byte
-	ServerKey  []byte
+	CaCert       []byte
+	ClientCert   []byte
+	ClientKey    []byte
+	ClientConfig *tls.Config
+	ServerCert   []byte
+	ServerKey    []byte
+	ServerConfig *tls.Config
 }
 
 func New() (*TestPKI, error) {
@@ -157,12 +160,25 @@ func New() (*TestPKI, error) {
 		return nil, fmt.Errorf("failed to encode client certificate: %w", err)
 	}
 
+	caPool := x509.NewCertPool()
+	caPool.AddCert(caCert)
+
 	return &TestPKI{
 		CaCert:     caPEM,
 		ClientCert: clientPEM,
 		ClientKey:  EncodeECDSAPrivateKey(clientKey),
+		ClientConfig: &tls.Config{
+			Certificates: []tls.Certificate{{Certificate: [][]byte{clientBytes}, PrivateKey: clientKey}},
+			ServerName:   "localhost",
+			RootCAs:      caPool,
+		},
 		ServerCert: serverPEM,
 		ServerKey:  EncodeECDSAPrivateKey(serverKey),
+		ServerConfig: &tls.Config{
+			Certificates: []tls.Certificate{{Certificate: [][]byte{serverBytes}, PrivateKey: serverKey}},
+			ClientCAs:    caPool,
+			ClientAuth:   tls.RequireAndVerifyClientCert,
+		},
 	}, nil
 }
 
