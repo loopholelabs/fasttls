@@ -169,7 +169,9 @@ func (s *Session) UnsafeSecrets() (unsafe.Pointer, error) {
 			return nil, fmt.Errorf("failed to get handshake secrets: %d", uint8(s.status))
 		}
 
-		s.Free()
+		if s.free.CompareAndSwap(false, true) {
+			s.handshakeState.Store(handshakeStateUnknown)
+		}
 		return unsafe.Pointer(secrets), nil
 	}
 
