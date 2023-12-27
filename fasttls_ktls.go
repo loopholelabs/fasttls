@@ -24,13 +24,9 @@ package fasttls
 */
 import "C"
 import (
-	"bufio"
-	"github.com/hashicorp/go-version"
 	"github.com/loopholelabs/fasttls/pkg/ktls"
 	"github.com/loopholelabs/fasttls/pkg/std"
 	"net"
-	"os"
-	"strings"
 )
 
 var (
@@ -38,38 +34,39 @@ var (
 )
 
 func init() {
-	file, err := os.Open("/proc/version")
-	if err != nil {
-		panic(err)
-		kTLSSupported = false
-		return
-	}
-
-	scanner := bufio.NewScanner(file)
-	if scanner.Scan() {
-		line := scanner.Text()
-		parts := strings.Fields(line)
-		if len(parts) > 2 {
-			v, err := version.NewVersion(parts[2])
-			if err != nil {
-				panic(err)
-				kTLSSupported = false
-				return
-			}
-			if v.LessThan(version.Must(version.NewVersion("4.13"))) {
-				panic("Bad version")
-				kTLSSupported = false
-				return
-			}
-		}
-	}
-
-	if _, err := os.Stat("sys/kernel/debug/tls"); os.IsNotExist(err) {
-		panic("no support")
-		kTLSSupported = false
-	} else {
-		kTLSSupported = true
-	}
+	//file, err := os.Open("/proc/version")
+	//if err != nil {
+	//	panic(err)
+	//	kTLSSupported = false
+	//	return
+	//}
+	//
+	//scanner := bufio.NewScanner(file)
+	//if scanner.Scan() {
+	//	line := scanner.Text()
+	//	parts := strings.Fields(line)
+	//	if len(parts) > 2 {
+	//		v, err := version.NewVersion(parts[2])
+	//		if err != nil {
+	//			panic(err)
+	//			kTLSSupported = false
+	//			return
+	//		}
+	//		if v.LessThan(version.Must(version.NewVersion("4.13"))) {
+	//			panic("Bad version")
+	//			kTLSSupported = false
+	//			return
+	//		}
+	//	}
+	//}
+	//
+	//if _, err := os.Stat("/sys/kernel/debug/tls"); os.IsNotExist(err) {
+	//	panic("no support")
+	//	kTLSSupported = false
+	//} else {
+	//	kTLSSupported = true
+	//}
+	kTLSSupported = true
 }
 
 type Server struct {
